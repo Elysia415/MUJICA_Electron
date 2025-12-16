@@ -1,13 +1,45 @@
+# Dependencies
 node_modules/
 **/node_modules/
 __pycache__/
 **/__pycache__/
+*.pyc
+
+# Environment
 .env
 .DS_Store
+
+# Build outputs
 dist/
 build/
+**/dist/
+**/build/
 coverage/
+*.log
+
+# IDE
 .idea/
 .vscode/
-*.log
 .gemini/
+
+# MUJICA Data & Database
+data/
+*.db
+*.sqlite
+*.sqlite3
+*.lancedb/
+
+# Electron Builder Output
+release/
+out/
+
+# PyInstaller
+backend_exe/
+
+# Misc
+Thumbs.db
+*.tmp
+*.bak
+
+.history/
+backup_legacy/

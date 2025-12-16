@@ -1,14 +1,66 @@
 {
   "name": "mujica-electron",
   "version": "1.0.0",
+  "description": "MUJICA Research Assistant - Evidence-based Academic Writing",
+  "author": "MUJICA Team",
   "main": "main/main.js",
   "scripts": {
     "start": "electron .",
     "dev": "concurrently \"npm run dev:renderer\" \"npm run dev:electron\"",
     "dev:renderer": "cd renderer && npm run dev",
     "dev:electron": "wait-on http://localhost:5173 && electron .",
-    "pack": "electron-builder --dir",
-    "dist": "electron-builder"
+    "build:renderer": "cd renderer && npm run build",
+    "pack": "npm run build:renderer && electron-builder --dir",
+    "dist": "npm run build:renderer && electron-builder"
+  },
+  "build": {
+    "appId": "com.mujica.research",
+    "productName": "MUJICA",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main/**/*",
+      "renderer/dist/**/*",
+      "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}",
+      "!**/node_modules/.cache"
+    ],
+    "extraResources": [
+      {
+        "from": "../backend/dist/mujica_backend",
+        "to": "backend/mujica_backend"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
+      "installerHeaderIcon": "assets/icon.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "MUJICA"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "assets/icon.icns"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "assets/icon.png"
+    }
   },
   "devDependencies": {
     "concurrently": "^8.2.0",

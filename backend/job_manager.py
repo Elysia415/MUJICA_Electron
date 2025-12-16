@@ -15,6 +15,7 @@ from src.researcher.agent import ResearcherAgent
 from src.writer.agent import WriterAgent
 from src.verifier.agent import VerifierAgent
 from src.utils.cancel import MujicaCancelled
+from src.utils.chat_history import save_conversation
 
 # ---------------------------
 # Job Classes
@@ -127,20 +128,35 @@ def run_plan_job(
     stats: Dict[str, Any] = None,
 ) -> None:
     try:
+        print(f"[JobManager] Starting plan job {job.job_id}")
+        print(f"[JobManager] Model: {model_name}, BaseURL: {base_url}")
+        
         _job_update(job, status="running", stage="init", message="Initializing Planner...")
-        llm = get_llm_client(api_key=api_key, base_url=base_url, allow_env_fallback=False)
+        # Allow env fallback - frontend might send masked/empty API key
+        if api_key:
+            api_key = api_key.strip()
+            
+        llm = get_llm_client(api_key=api_key, base_url=base_url, allow_env_fallback=True)
         if llm is None:
+            print("[JobManager] Failed to create LLM client")
             raise RuntimeError("Authentication Failed: missing/invalid API key.")
-
+            
+        print("[JobManager] LLM Client created. Initializing planner...")
         planner = PlannerAgent(llm, model=model_name)
         _job_update(job, stage="planning", message="Generating Plan...")
         
+        print("[JobManager] Calling planner.generate_plan...")
         plan = planner.generate_plan(user_query, stats or {}, cancel_event=job.cancel_event)
+        print("[JobManager] Plan generated successfully")
         
         _job_update(job, result={"plan": plan}, status="done", stage="done", message="Planning Complete ✅", finished_ts=time.time())
     except MujicaCancelled as e:
+        print(f"[JobManager] Cancelled: {e}")
         _job_update(job, status="cancelled", stage="cancelled", message="Planning Cancelled", error=str(e), finished_ts=time.time())
     except Exception as e:
+        print(f"[JobManager] Error: {e}")
+        import traceback
+        traceback.print_exc()
         _job_update(job, status="error", stage="error", message="Planning Failed ❌", error=str(e), error_trace=traceback.format_exc(), finished_ts=time.time())
 
 def run_research_job(
@@ -211,6 +227,27 @@ def run_research_job(
             "verification_result": verification
         }, status="done", stage="done", message="All Done ✅", finished_ts=time.time())
 
+        # Save to History
+        try:
+            snapshot = {
+                "title": plan.get("title", "Research Report"),
+                "created_ts": time.time(),
+                "messages": [
+                    {"role": "user", "content": str(plan.get("title") or "Research Task")},
+                    {"role": "assistant", "content": report}
+                ],
+                # Save full result for detailed re-rendering
+                "job_result": {
+                     "final_report": report,
+                     "verification_result": verification,
+                     "research_notes": notes,
+                     "report_ref_ctx": ref_ctx
+                }
+            }
+            save_conversation(job.job_id, snapshot)
+        except Exception as history_error:
+            print(f"[JobManager] Failed to save history: {history_error}")
+
     except MujicaCancelled as e:
         _job_update(job, status="cancelled", stage="cancelled", message="Cancelled", error=str(e), finished_ts=time.time())
     except Exception as e:
@@ -245,15 +282,34 @@ def run_ingest_job(
         def _on_progress(payload: Dict[str, Any]) -> None:
             if job.cancel_event.is_set():
                 raise MujicaCancelled("User Cancelled")
-            _job_emit_progress(job, kind=payload.get("stage", "unknown"), payload=payload)
-            # Update message based on stage
-            stage = payload.get("stage")
+            
+            stage = payload.get("stage", "unknown")
             cur = payload.get("current", 0)
             tot = payload.get("total", 0)
-            if stage == "fetch_papers":
-                _job_update(job, message=f"Fetching Meta {cur}/{tot}")
-            elif stage == "download_pdf":
-                _job_update(job, message=f"Downloading PDF {cur}/{tot}")
+            
+            # Map embed_papers/embed_chunks to unified "embedding" stage for frontend
+            if stage in ("embed_papers", "embed_chunks"):
+                # Emit both as "embedding" stage so frontend progress bar picks it up
+                _job_emit_progress(job, kind="embedding", payload={
+                    "stage": "embedding",
+                    "current": cur,
+                    "total": tot,
+                    "sub_stage": stage,
+                    **{k: v for k, v in payload.items() if k not in ("stage", "current", "total")}
+                })
+                _job_update(job, message=f"Embedding {cur}/{tot}")
+            elif stage == "prepare_chunks":
+                _job_emit_progress(job, kind="chunking", payload=payload)
+                _job_update(job, message=f"Chunking {cur}/{tot}")
+            else:
+                _job_emit_progress(job, kind=stage, payload=payload)
+                # Update message based on stage
+                if stage == "fetch_papers":
+                    _job_update(job, message=f"Fetching Meta {cur}/{tot}")
+                elif stage == "download_pdf":
+                    _job_update(job, message=f"Downloading PDF {cur}/{tot}")
+                elif stage == "parse_pdf":
+                    _job_update(job, message=f"Parsing PDF {cur}/{tot}")
 
         papers = ingestor.ingest_venue(
             venue_id=venue_id,

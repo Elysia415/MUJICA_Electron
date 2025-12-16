@@ -7,40 +7,86 @@ let mainWindow;
 let backendProcess;
 
 const BACKEND_PORT = 8000;
-const PY_DIST_FOLDER = path.join(__dirname, '../../backend'); // dev path
+
+// Determine if running in packaged mode
+const isPackaged = app.isPackaged;
+const PROJECT_ROOT = isPackaged
+  ? path.dirname(app.getPath('exe'))
+  : path.join(__dirname, '../..');
 
 function startBackend() {
   console.log('Starting Python Backend...');
-  // In dev, assume python is in PATH or venv
-  // For robustness, users might need to configure this path
-  const pythonExecutable = 'python'; 
-  const scriptPath = path.join(PY_DIST_FOLDER, 'app.py');
 
-  backendProcess = spawn(pythonExecutable, [scriptPath], {
-    cwd: PY_DIST_FOLDER,
-    stdio: 'inherit' // Pipe output to console
+  let executable;
+  let args = [];
+  let cwd;
+  let useShell = false;
+
+  if (isPackaged) {
+    // In packaged app, we expect the backend folder to be in resources/backend/mujica_backend/
+    const resourcesPath = process.resourcesPath;
+    const backendDist = path.join(resourcesPath, 'backend', 'mujica_backend');
+    executable = path.join(backendDist, 'mujica_backend.exe');
+    cwd = backendDist;
+  } else {
+    // Dev mode - use shell on Windows to find Python in PATH
+    executable = process.platform === 'win32' ? 'python' : 'python3';
+    args = ['app.py'];
+    cwd = path.join(__dirname, '../../backend');
+    useShell = process.platform === 'win32'; // Enable shell on Windows
+  }
+
+  console.log(`[Backend] Spawning: ${executable} ${args.join(' ')}`);
+  console.log(`[Backend] CWD: ${cwd}`);
+  console.log(`[Backend] Shell mode: ${useShell}`);
+
+  backendProcess = spawn(executable, args, {
+    cwd: cwd,
+    stdio: 'inherit',
+    shell: useShell, // Use shell on Windows to resolve Python from PATH
+    windowsHide: true // Hide the Python console window on Windows
   });
 
   backendProcess.on('error', (err) => {
-    console.error('Failed to start backend:', err);
+    console.error('[Backend] Failed to start:', err.message);
+    console.error('[Backend] Make sure Python is installed and in your PATH.');
+  });
+
+  backendProcess.on('exit', (code, signal) => {
+    console.log(`[Backend] Process exited with code ${code}, signal ${signal}`);
   });
 }
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 800,
+    width: 1400,
+    height: 900,
+    minWidth: 1024,
+    minHeight: 700,
     backgroundColor: '#050505',
-    webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false, // For simple IPC if needed, though we use HTTP
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#0a0a0c',
+      symbolColor: '#c5a059',
+      height: 32
     },
-    show: false, // Wait until ready to show
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+    show: false,
   });
 
-  const startUrl = 'http://localhost:5173'; // Vite dev server
-
-  mainWindow.loadURL(startUrl);
+  // Load appropriate URL based on mode
+  if (isPackaged) {
+    // Production: load from built files
+    mainWindow.loadFile(path.join(__dirname, '../renderer/dist/index.html'));
+  } else {
+    // Development: load from Vite dev server
+    mainWindow.loadURL('http://localhost:5173');
+    // Open DevTools in dev mode
+    mainWindow.webContents.openDevTools({ mode: 'detach' });
+  }
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
@@ -53,7 +99,9 @@ function createWindow() {
 
 app.on('ready', () => {
   startBackend();
-  createWindow();
+
+  // Wait a moment for backend to start before creating window
+  setTimeout(createWindow, 1000);
 });
 
 app.on('window-all-closed', function () {
