@@ -1,0 +1,49 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Ave Mujica Theme (Dark/Gothic/Elegant) */
+  --bg: #050505;
+  --bg-glow-1: rgba(139, 0, 50, 0.35); 
+  --bg-glow-2: rgba(75, 0, 130, 0.25); 
+
+  --panel: rgba(18, 18, 24, 0.90); /* Less transparent for readability */
+  --panel-2: rgba(26, 26, 32, 0.85);
+
+  --text: #eaeaea;
+  --muted: #999999;
+
+  --border: rgba(197, 160, 89, 0.6); 
+  
+  --accent: #8a002b;      /* Deep Crimson */
+  --accent-2: #c5a059;    /* Antique Gold */
+  
+  --accent-hover: #a30033;
+  --accent-2-hover: #d4af37;
+}
+
+body {
+  margin: 0;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background-color: var(--bg);
+  color: var(--text);
+  overflow: hidden; /* App-like feel */
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
+}

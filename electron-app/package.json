@@ -1,0 +1,19 @@
+{
+  "name": "mujica-electron",
+  "version": "1.0.0",
+  "main": "main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "concurrently \"npm run dev:renderer\" \"npm run dev:electron\"",
+    "dev:renderer": "cd renderer && npm run dev",
+    "dev:electron": "wait-on http://localhost:5173 && electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.0",
+    "electron": "^26.0.0",
+    "electron-builder": "^24.6.0",
+    "wait-on": "^7.0.1"
+  }
+}
