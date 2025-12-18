@@ -165,7 +165,7 @@ function App() {
       {/* Sidebar */}
       <div className="w-16 md:w-64 bg-panel border-r border-border flex flex-col items-center md:items-stretch py-4 z-20 shadow-xl">
         <div className="flex items-center justify-center p-2 mb-8">
-          <img src="/logo.png" alt="MUJICA" className="w-8 h-8 rounded-lg shadow-[0_0_15px_var(--accent)]" />
+          <img src="./logo.png" alt="MUJICA" className="w-8 h-8 rounded-lg shadow-[0_0_15px_var(--accent)]" />
           <span className="hidden md:ml-3 font-bold text-xl tracking-widest text-accent-2">MUJICA</span>
         </div>
 
