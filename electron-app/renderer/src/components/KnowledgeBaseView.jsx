@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
 import { Trash2, RefreshCw, Download, Upload, Search, Plus, FileCheck, X, ExternalLink, Filter, BarChart3 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useConfirm, useToast } from './Dialog';
 
 export function KnowledgeBaseView({ initialPaperId }) {
     const [papers, setPapers] = useState([]);
@@ -42,6 +43,10 @@ export function KnowledgeBaseView({ initialPaperId }) {
     // Semantic Search Mode
     const [searchMode, setSearchMode] = useState('keyword'); // 'keyword' or 'semantic'
     const [semanticLoading, setSemanticLoading] = useState(false);
+
+    // Custom dialog hooks (replacing native alert/confirm)
+    const { confirm, dialog: confirmDialog } = useConfirm();
+    const { show: showToast, toast } = useToast();
 
     const fetchPapers = async () => {
         setLoading(true);
@@ -95,21 +100,32 @@ export function KnowledgeBaseView({ initialPaperId }) {
 
     const handleDelete = async (id, e) => {
         e?.stopPropagation();
-        if (!confirm('确定删除这篇论文吗？')) return;
+        const confirmed = await confirm({
+            title: '删除论文',
+            message: '确定删除这篇论文吗？此操作不可撤销。',
+            danger: true
+        });
+        if (!confirmed) return;
         try {
             await api.deletePaper(id);
             fetchPapers();
             fetchStats();
             if (selectedPaper?.id === id) setSelectedPaper(null);
             setSelectedIds(prev => { prev.delete(id); return new Set(prev); });
+            showToast('论文已删除', 'success');
         } catch (e) {
-            alert('删除失败: ' + e.message);
+            showToast('删除失败: ' + e.message, 'error');
         }
     };
 
     const handleBatchDelete = async () => {
         if (selectedIds.size === 0) return;
-        if (!confirm(`确定删除选中的 ${selectedIds.size} 篇论文吗？此操作不可撤销。`)) return;
+        const confirmed = await confirm({
+            title: '批量删除',
+            message: `确定删除选中的 ${selectedIds.size} 篇论文吗？此操作不可撤销。`,
+            danger: true
+        });
+        if (!confirmed) return;
         try {
             for (const id of selectedIds) {
                 await api.deletePaper(id);
@@ -117,8 +133,9 @@ export function KnowledgeBaseView({ initialPaperId }) {
             setSelectedIds(new Set());
             fetchPapers();
             fetchStats();
+            showToast(`已删除 ${selectedIds.size} 篇论文`, 'success');
         } catch (e) {
-            alert('批量删除失败: ' + e.message);
+            showToast('批量删除失败: ' + e.message, 'error');
         }
     };
 
@@ -174,7 +191,7 @@ export function KnowledgeBaseView({ initialPaperId }) {
             });
         } catch (err) {
             console.error("Export failed", err);
-            alert("导出失败: " + (err.message));
+            showToast("导出失败: " + (err.message), 'error');
         } finally {
             setExporting(false);
             setProgress(0);
@@ -189,7 +206,11 @@ export function KnowledgeBaseView({ initialPaperId }) {
         const file = e.target.files[0];
         if (!file) return;
 
-        if (!confirm("导入将合并数据到当前知识库。\n建议先导出备份当前数据。\n\n确定要继续吗？")) {
+        const confirmed = await confirm({
+            title: '导入知识库',
+            message: '导入将合并数据到当前知识库。\n建议先导出备份当前数据。\n\n确定要继续吗？'
+        });
+        if (!confirmed) {
             e.target.value = null;
             return;
         }
@@ -203,12 +224,12 @@ export function KnowledgeBaseView({ initialPaperId }) {
             await api.importKB(formData, (p) => {
                 setProgress(Math.round((p.loaded * 100) / p.total));
             });
-            alert("导入且合并成功！");
+            showToast("导入且合并成功！", 'success');
             fetchPapers();
             fetchStats();
         } catch (err) {
             console.error("Import failed", err);
-            alert("导入失败: " + (err.response?.data?.detail || err.message));
+            showToast("导入失败: " + (err.response?.data?.detail || err.message), 'error');
         } finally {
             setImporting(false);
             setProgress(0);
@@ -217,356 +238,360 @@ export function KnowledgeBaseView({ initialPaperId }) {
     };
 
     return (
-        <div className="h-full flex flex-col p-6 max-w-6xl mx-auto w-full">
-            {/* Hidden File Input */}
-            <input
-                type="file"
-                ref={fileInputRef}
-                onChange={handleFileChange}
-                accept=".zip"
-                className="hidden"
-            />
+        <>
+            {confirmDialog}
+            {toast}
+            <div className="h-full flex flex-col p-6 max-w-6xl mx-auto w-full">
+                {/* Hidden File Input */}
+                <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleFileChange}
+                    accept=".zip"
+                    className="hidden"
+                />
 
-            {/* Header */}
-            <div className="flex justify-between items-center mb-4">
-                <h1 className="text-3xl font-bold text-accent-2">知识库</h1>
-                <div className="flex gap-2">
-                    <button
-                        onClick={handleExport}
-                        className="p-2 text-muted hover:text-accent rounded-lg hover:bg-white/5 transition-colors"
-                        title="导出备份 (ZIP)"
-                    >
-                        <Download size={18} />
-                    </button>
-                    <button
-                        onClick={handleImportClick}
-                        className="p-2 text-muted hover:text-accent rounded-lg hover:bg-white/5 transition-colors"
-                        title="导入合并 (ZIP)"
-                    >
-                        <Upload size={18} />
-                    </button>
-                    <div className="w-px h-8 bg-white/10 mx-1"></div>
-                    <button
-                        onClick={() => setIngestModalOpen(true)}
-                        className="flex items-center gap-2 bg-accent px-4 py-2 rounded-lg text-white hover:bg-accent-hover transition-colors"
-                    >
-                        <Plus size={18} /> 导入论文
-                    </button>
-                </div>
-            </div>
-
-            {/* Stats Overview */}
-            <div className="grid grid-cols-3 gap-4 mb-4">
-                <div className="bg-panel border border-border rounded-lg p-3 flex items-center gap-3">
-                    <BarChart3 size={20} className="text-accent" />
-                    <div>
-                        <div className="text-2xl font-bold text-text">{stats.papers || papers.length}</div>
-                        <div className="text-xs text-muted">论文</div>
-                    </div>
-                </div>
-                <div className="bg-panel border border-border rounded-lg p-3 flex items-center gap-3">
-                    <FileCheck size={20} className="text-green-400" />
-                    <div>
-                        <div className="text-2xl font-bold text-text">{stats.reviews || 0}</div>
-                        <div className="text-xs text-muted">评审</div>
-                    </div>
-                </div>
-                <div className="bg-panel border border-border rounded-lg p-3 flex items-center gap-3">
-                    <Search size={20} className="text-blue-400" />
-                    <div>
-                        <div className="text-2xl font-bold text-text">{stats.chunks || 0}</div>
-                        <div className="text-xs text-muted">向量 Chunks</div>
-                    </div>
-                </div>
-            </div>
-
-            {/* Search + Filter Toggle */}
-            <div className="flex gap-2 mb-2">
-                <div className="flex-1 bg-panel border border-border rounded-lg flex items-center px-3 py-2">
-                    <Search size={18} className="text-muted mr-2" />
-                    <input
-                        type="text"
-                        placeholder={searchMode === 'semantic' ? '语义搜索（理解含义）...' : '关键词搜索（匹配标题）...'}
-                        className="bg-transparent outline-none flex-1 text-text"
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
-                    />
-                    {semanticLoading && <div className="w-4 h-4 border-2 border-accent border-t-transparent rounded-full animate-spin mr-2"></div>}
-                </div>
-                {/* Semantic Search Toggle */}
-                <button
-                    onClick={() => setSearchMode(searchMode === 'keyword' ? 'semantic' : 'keyword')}
-                    className={`px-3 py-2 border border-border rounded-lg transition-all text-sm font-medium flex items-center gap-1.5
-                        ${searchMode === 'semantic'
-                            ? 'bg-accent/20 text-accent border-accent/50'
-                            : 'bg-panel text-muted hover:text-text hover:bg-white/5'}`}
-                    title={searchMode === 'semantic' ? '当前：语义搜索（向量）' : '当前：关键词搜索'}
-                >
-                    {searchMode === 'semantic' ? '🧠 语义' : '🔤 关键词'}
-                </button>
-                <button
-                    onClick={() => setShowFilters(!showFilters)}
-                    className={`p-2 border border-border rounded-lg transition-colors ${showFilters ? 'bg-accent/20 text-accent' : 'bg-panel text-muted hover:text-text'}`}
-                >
-                    <Filter size={18} />
-                </button>
-                <button onClick={() => { fetchPapers(); fetchStats(); }} className="p-2 bg-panel border border-border rounded-lg text-muted hover:text-text hover:bg-white/5">
-                    <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
-                </button>
-            </div>
-
-            {/* Filter Panel */}
-            {showFilters && (
-                <div className="bg-panel border border-border rounded-lg p-3 mb-4 flex gap-4 flex-wrap items-center">
-                    <div>
-                        <label className="text-xs text-muted mr-2">年份:</label>
-                        <select value={filterYear} onChange={e => setFilterYear(e.target.value)} className="bg-black/40 border border-border rounded px-2 py-1 text-sm text-text">
-                            <option value="">全部</option>
-                            {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
-                        </select>
-                    </div>
-                    <div>
-                        <label className="text-xs text-muted mr-2">会议:</label>
-                        <select value={filterVenue} onChange={e => setFilterVenue(e.target.value)} className="bg-black/40 border border-border rounded px-2 py-1 text-sm text-text">
-                            <option value="">全部</option>
-                            {venueOptions.map(v => <option key={v} value={v}>{v}</option>)}
-                        </select>
-                    </div>
-                    <div>
-                        <label className="text-xs text-muted mr-2">决策:</label>
-                        <select value={filterDecision} onChange={e => setFilterDecision(e.target.value)} className="bg-black/40 border border-border rounded px-2 py-1 text-sm text-text">
-                            <option value="">全部</option>
-                            {decisionOptions.map(d => <option key={d} value={d}>{d}</option>)}
-                        </select>
-                    </div>
-                    <button onClick={() => { setFilterYear(''); setFilterVenue(''); setFilterDecision(''); }} className="text-xs text-accent hover:underline">
-                        清除筛选
-                    </button>
-                </div>
-            )}
-
-            {/* Batch Actions */}
-            {selectedIds.size > 0 && (
-                <div className="bg-accent/10 border border-accent/30 rounded-lg p-3 mb-4 flex items-center justify-between">
-                    <span className="text-sm text-accent-2">已选中 {selectedIds.size} 篇论文</span>
+                {/* Header */}
+                <div className="flex justify-between items-center mb-4">
+                    <h1 className="text-3xl font-bold text-accent-2">知识库</h1>
                     <div className="flex gap-2">
-                        <button onClick={() => setSelectedIds(new Set())} className="text-sm text-muted hover:text-text">
-                            取消选择
+                        <button
+                            onClick={handleExport}
+                            className="p-2 text-muted hover:text-accent rounded-lg hover:bg-white/5 transition-colors"
+                            title="导出备份 (ZIP)"
+                        >
+                            <Download size={18} />
                         </button>
-                        <button onClick={handleBatchDelete} className="px-3 py-1 bg-red-500/20 text-red-400 rounded text-sm hover:bg-red-500/30">
-                            批量删除
+                        <button
+                            onClick={handleImportClick}
+                            className="p-2 text-muted hover:text-accent rounded-lg hover:bg-white/5 transition-colors"
+                            title="导入合并 (ZIP)"
+                        >
+                            <Upload size={18} />
+                        </button>
+                        <div className="w-px h-8 bg-white/10 mx-1"></div>
+                        <button
+                            onClick={() => setIngestModalOpen(true)}
+                            className="flex items-center gap-2 bg-accent px-4 py-2 rounded-lg text-white hover:bg-accent-hover transition-colors"
+                        >
+                            <Plus size={18} /> 导入论文
                         </button>
                     </div>
                 </div>
-            )}
 
-            {/* Papers Table */}
-            <div className="flex-1 overflow-auto bg-panel-2 border border-border rounded-xl">
-                <table className="w-full text-left border-collapse">
-                    <thead>
-                        <tr className="border-b border-border text-muted">
-                            <th className="p-4 font-medium w-10">
-                                <input
-                                    type="checkbox"
-                                    checked={filteredPapers.length > 0 && selectedIds.size === filteredPapers.length}
-                                    onChange={toggleSelectAll}
-                                    className="accent-accent"
-                                />
-                            </th>
-                            <th className="p-4 font-medium">标题</th>
-                            <th className="p-4 font-medium">会议/期刊</th>
-                            <th className="p-4 font-medium">结果</th>
-                            <th className="p-4 font-medium">评分</th>
-                            <th className="p-4 font-medium text-right">操作</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {filteredPapers.map((p) => (
-                            <tr
-                                key={p.id}
-                                className={`border-b border-border/50 hover:bg-white/5 transition-colors group cursor-pointer ${selectedIds.has(p.id) ? 'bg-accent/5' : ''}`}
-                                onClick={() => setSelectedPaper(p)}
-                            >
-                                <td className="p-4" onClick={e => e.stopPropagation()}>
+                {/* Stats Overview */}
+                <div className="grid grid-cols-3 gap-4 mb-4">
+                    <div className="bg-panel border border-border rounded-lg p-3 flex items-center gap-3">
+                        <BarChart3 size={20} className="text-accent" />
+                        <div>
+                            <div className="text-2xl font-bold text-text">{stats.papers || papers.length}</div>
+                            <div className="text-xs text-muted">论文</div>
+                        </div>
+                    </div>
+                    <div className="bg-panel border border-border rounded-lg p-3 flex items-center gap-3">
+                        <FileCheck size={20} className="text-green-400" />
+                        <div>
+                            <div className="text-2xl font-bold text-text">{stats.reviews || 0}</div>
+                            <div className="text-xs text-muted">评审</div>
+                        </div>
+                    </div>
+                    <div className="bg-panel border border-border rounded-lg p-3 flex items-center gap-3">
+                        <Search size={20} className="text-blue-400" />
+                        <div>
+                            <div className="text-2xl font-bold text-text">{stats.chunks || 0}</div>
+                            <div className="text-xs text-muted">向量 Chunks</div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Search + Filter Toggle */}
+                <div className="flex gap-2 mb-2">
+                    <div className="flex-1 bg-panel border border-border rounded-lg flex items-center px-3 py-2">
+                        <Search size={18} className="text-muted mr-2" />
+                        <input
+                            type="text"
+                            placeholder={searchMode === 'semantic' ? '语义搜索（理解含义）...' : '关键词搜索（匹配标题）...'}
+                            className="bg-transparent outline-none flex-1 text-text"
+                            value={search}
+                            onChange={(e) => setSearch(e.target.value)}
+                        />
+                        {semanticLoading && <div className="w-4 h-4 border-2 border-accent border-t-transparent rounded-full animate-spin mr-2"></div>}
+                    </div>
+                    {/* Semantic Search Toggle */}
+                    <button
+                        onClick={() => setSearchMode(searchMode === 'keyword' ? 'semantic' : 'keyword')}
+                        className={`px-3 py-2 border border-border rounded-lg transition-all text-sm font-medium flex items-center gap-1.5
+                        ${searchMode === 'semantic'
+                                ? 'bg-accent/20 text-accent border-accent/50'
+                                : 'bg-panel text-muted hover:text-text hover:bg-white/5'}`}
+                        title={searchMode === 'semantic' ? '当前：语义搜索（向量）' : '当前：关键词搜索'}
+                    >
+                        {searchMode === 'semantic' ? '🧠 语义' : '🔤 关键词'}
+                    </button>
+                    <button
+                        onClick={() => setShowFilters(!showFilters)}
+                        className={`p-2 border border-border rounded-lg transition-colors ${showFilters ? 'bg-accent/20 text-accent' : 'bg-panel text-muted hover:text-text'}`}
+                    >
+                        <Filter size={18} />
+                    </button>
+                    <button onClick={() => { fetchPapers(); fetchStats(); }} className="p-2 bg-panel border border-border rounded-lg text-muted hover:text-text hover:bg-white/5">
+                        <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
+                    </button>
+                </div>
+
+                {/* Filter Panel */}
+                {showFilters && (
+                    <div className="bg-panel border border-border rounded-lg p-3 mb-4 flex gap-4 flex-wrap items-center">
+                        <div>
+                            <label className="text-xs text-muted mr-2">年份:</label>
+                            <select value={filterYear} onChange={e => setFilterYear(e.target.value)} className="bg-black/40 border border-border rounded px-2 py-1 text-sm text-text">
+                                <option value="">全部</option>
+                                {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="text-xs text-muted mr-2">会议:</label>
+                            <select value={filterVenue} onChange={e => setFilterVenue(e.target.value)} className="bg-black/40 border border-border rounded px-2 py-1 text-sm text-text">
+                                <option value="">全部</option>
+                                {venueOptions.map(v => <option key={v} value={v}>{v}</option>)}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="text-xs text-muted mr-2">决策:</label>
+                            <select value={filterDecision} onChange={e => setFilterDecision(e.target.value)} className="bg-black/40 border border-border rounded px-2 py-1 text-sm text-text">
+                                <option value="">全部</option>
+                                {decisionOptions.map(d => <option key={d} value={d}>{d}</option>)}
+                            </select>
+                        </div>
+                        <button onClick={() => { setFilterYear(''); setFilterVenue(''); setFilterDecision(''); }} className="text-xs text-accent hover:underline">
+                            清除筛选
+                        </button>
+                    </div>
+                )}
+
+                {/* Batch Actions */}
+                {selectedIds.size > 0 && (
+                    <div className="bg-accent/10 border border-accent/30 rounded-lg p-3 mb-4 flex items-center justify-between">
+                        <span className="text-sm text-accent-2">已选中 {selectedIds.size} 篇论文</span>
+                        <div className="flex gap-2">
+                            <button onClick={() => setSelectedIds(new Set())} className="text-sm text-muted hover:text-text">
+                                取消选择
+                            </button>
+                            <button onClick={handleBatchDelete} className="px-3 py-1 bg-red-500/20 text-red-400 rounded text-sm hover:bg-red-500/30">
+                                批量删除
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Papers Table */}
+                <div className="flex-1 overflow-auto bg-panel-2 border border-border rounded-xl">
+                    <table className="w-full text-left border-collapse">
+                        <thead>
+                            <tr className="border-b border-border text-muted">
+                                <th className="p-4 font-medium w-10">
                                     <input
                                         type="checkbox"
-                                        checked={selectedIds.has(p.id)}
-                                        onChange={e => toggleSelect(p.id, e)}
+                                        checked={filteredPapers.length > 0 && selectedIds.size === filteredPapers.length}
+                                        onChange={toggleSelectAll}
                                         className="accent-accent"
                                     />
-                                </td>
-                                <td className="p-4">
-                                    <div className="font-medium text-text line-clamp-1" title={p.title}>{p.title}</div>
-                                    <div className="text-xs text-muted font-mono mt-1">{p.id}</div>
-                                </td>
-                                <td className="p-4 text-sm">{p.venue_id} <span className="text-muted">({p.year})</span></td>
-                                <td className="p-4">
-                                    <span className={`text-xs px-2 py-1 rounded-full border whitespace-nowrap ${p.decision?.toLowerCase().includes('accept')
-                                        ? 'bg-green-500/10 border-green-500/30 text-green-400'
-                                        : 'bg-red-500/10 border-red-500/30 text-red-400'
-                                        }`}>
-                                        {p.decision || 'Unknown'}
-                                    </span>
-                                </td>
-                                <td className="p-4 font-mono text-accent-2">{p.rating || '-'}</td>
-                                <td className="p-4 text-right">
-                                    <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                        <button
-                                            onClick={(e) => handleDelete(p.id, e)}
-                                            className="p-1.5 text-red-400 hover:bg-red-500/20 rounded transition-colors" title="Delete">
-                                            <Trash2 size={16} />
-                                        </button>
-                                        {p.pdf_path && (
+                                </th>
+                                <th className="p-4 font-medium">标题</th>
+                                <th className="p-4 font-medium">会议/期刊</th>
+                                <th className="p-4 font-medium">结果</th>
+                                <th className="p-4 font-medium">评分</th>
+                                <th className="p-4 font-medium text-right">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {filteredPapers.map((p) => (
+                                <tr
+                                    key={p.id}
+                                    className={`border-b border-border/50 hover:bg-white/5 transition-colors group cursor-pointer ${selectedIds.has(p.id) ? 'bg-accent/5' : ''}`}
+                                    onClick={() => setSelectedPaper(p)}
+                                >
+                                    <td className="p-4" onClick={e => e.stopPropagation()}>
+                                        <input
+                                            type="checkbox"
+                                            checked={selectedIds.has(p.id)}
+                                            onChange={e => toggleSelect(p.id, e)}
+                                            className="accent-accent"
+                                        />
+                                    </td>
+                                    <td className="p-4">
+                                        <div className="font-medium text-text line-clamp-1" title={p.title}>{p.title}</div>
+                                        <div className="text-xs text-muted font-mono mt-1">{p.id}</div>
+                                    </td>
+                                    <td className="p-4 text-sm">{p.venue_id} <span className="text-muted">({p.year})</span></td>
+                                    <td className="p-4">
+                                        <span className={`text-xs px-2 py-1 rounded-full border whitespace-nowrap ${p.decision?.toLowerCase().includes('accept')
+                                            ? 'bg-green-500/10 border-green-500/30 text-green-400'
+                                            : 'bg-red-500/10 border-red-500/30 text-red-400'
+                                            }`}>
+                                            {p.decision || 'Unknown'}
+                                        </span>
+                                    </td>
+                                    <td className="p-4 font-mono text-accent-2">{p.rating || '-'}</td>
+                                    <td className="p-4 text-right">
+                                        <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                                             <button
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    api.openPdf(p.pdf_path).catch(err => {
-                                                        alert(`打开 PDF 失败: ${err.response?.data?.detail || err.message}`);
-                                                    });
-                                                }}
-                                                className="p-1.5 text-green-400 hover:bg-green-500/20 rounded transition-colors"
-                                                title="打开 PDF"
-                                            >
-                                                <FileCheck size={16} />
+                                                onClick={(e) => handleDelete(p.id, e)}
+                                                className="p-1.5 text-red-400 hover:bg-red-500/20 rounded transition-colors" title="Delete">
+                                                <Trash2 size={16} />
                                             </button>
-                                        )}
-                                    </div>
-                                </td>
-                            </tr>
-                        ))}
-                        {filteredPapers.length === 0 && !loading && (
-                            <tr>
-                                <td colSpan={6} className="p-8 text-center text-muted">未找到论文。</td>
-                            </tr>
-                        )}
-                    </tbody>
-                </table>
-            </div>
-
-            {/* Loading Overlay */}
-            {(exporting || importing) && (
-                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
-                    <div className="bg-panel p-6 rounded-xl border border-border shadow-2xl flex flex-col items-center gap-4 min-w-[300px]">
-                        <RefreshCw size={32} className="animate-spin text-accent" />
-                        <div className="text-lg font-medium text-white">
-                            {exporting ? "正在打包数据库..." : "正在合并数据库..."}
-                        </div>
-                        <div className="text-sm text-muted text-center leading-relaxed">
-                            {exporting
-                                ? "数据量较大时可能需要几分钟\n请不要关闭窗口"
-                                : "正在处理向量索引合并\n请耐心等待，勿关闭窗口"}
-                        </div>
-
-                        {/* Progress Bar */}
-                        <div className="w-64">
-                            <div className="h-1.5 bg-white/10 rounded-full overflow-hidden mb-2">
-                                <div
-                                    className="h-full bg-accent transition-all duration-300 ease-out"
-                                    style={{ width: `${progress}%` }}
-                                />
-                            </div>
-                            <div className="flex justify-between text-xs text-muted">
-                                <span>{exporting ? '下载中' : '上传中'}</span>
-                                <span className="font-mono">{progress}%</span>
-                            </div>
-                        </div>
-                    </div>
+                                            {p.pdf_path && (
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        api.openPdf(p.pdf_path).catch(err => {
+                                                            showToast(`打开 PDF 失败: ${err.response?.data?.detail || err.message}`, 'error');
+                                                        });
+                                                    }}
+                                                    className="p-1.5 text-green-400 hover:bg-green-500/20 rounded transition-colors"
+                                                    title="打开 PDF"
+                                                >
+                                                    <FileCheck size={16} />
+                                                </button>
+                                            )}
+                                        </div>
+                                    </td>
+                                </tr>
+                            ))}
+                            {filteredPapers.length === 0 && !loading && (
+                                <tr>
+                                    <td colSpan={6} className="p-8 text-center text-muted">未找到论文。</td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
                 </div>
-            )}
 
-            {/* Export Success Modal */}
-            <AnimatePresence>
-                {exportSuccess && (
-                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                        <motion.div
-                            initial={{ opacity: 0, scale: 0.95 }}
-                            animate={{ opacity: 1, scale: 1 }}
-                            exit={{ opacity: 0, scale: 0.95 }}
-                            className="bg-panel border border-white/10 rounded-xl shadow-2xl max-w-md w-full overflow-hidden"
-                            onClick={e => e.stopPropagation()}
-                        >
-                            <div className="p-8 text-center flex flex-col items-center">
-                                <div className="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mb-6 text-green-400 shadow-[0_0_20px_rgba(74,222,128,0.2)]">
-                                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                {/* Loading Overlay */}
+                {(exporting || importing) && (
+                    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
+                        <div className="bg-panel p-6 rounded-xl border border-border shadow-2xl flex flex-col items-center gap-4 min-w-[300px]">
+                            <RefreshCw size={32} className="animate-spin text-accent" />
+                            <div className="text-lg font-medium text-white">
+                                {exporting ? "正在打包数据库..." : "正在合并数据库..."}
+                            </div>
+                            <div className="text-sm text-muted text-center leading-relaxed">
+                                {exporting
+                                    ? "数据量较大时可能需要几分钟\n请不要关闭窗口"
+                                    : "正在处理向量索引合并\n请耐心等待，勿关闭窗口"}
+                            </div>
+
+                            {/* Progress Bar */}
+                            <div className="w-64">
+                                <div className="h-1.5 bg-white/10 rounded-full overflow-hidden mb-2">
+                                    <div
+                                        className="h-full bg-accent transition-all duration-300 ease-out"
+                                        style={{ width: `${progress}%` }}
+                                    />
                                 </div>
-                                <h3 className="text-2xl font-bold text-white mb-2">导出成功!</h3>
-                                <p className="text-muted text-sm mb-6">数据库备份已生成</p>
+                                <div className="flex justify-between text-xs text-muted">
+                                    <span>{exporting ? '下载中' : '上传中'}</span>
+                                    <span className="font-mono">{progress}%</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
 
-                                <div className="text-left w-full bg-black/30 p-4 rounded-lg border border-white/5 mb-8 overflow-hidden">
-                                    <div className="text-xs text-muted uppercase tracking-wider mb-1 font-bold">保存路径</div>
-                                    <div className="text-xs text-accent-2 font-mono break-all leading-relaxed">
-                                        {exportSuccess.path}
+                {/* Export Success Modal */}
+                <AnimatePresence>
+                    {exportSuccess && (
+                        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                            <motion.div
+                                initial={{ opacity: 0, scale: 0.95 }}
+                                animate={{ opacity: 1, scale: 1 }}
+                                exit={{ opacity: 0, scale: 0.95 }}
+                                className="bg-panel border border-white/10 rounded-xl shadow-2xl max-w-md w-full overflow-hidden"
+                                onClick={e => e.stopPropagation()}
+                            >
+                                <div className="p-8 text-center flex flex-col items-center">
+                                    <div className="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mb-6 text-green-400 shadow-[0_0_20px_rgba(74,222,128,0.2)]">
+                                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                                    </div>
+                                    <h3 className="text-2xl font-bold text-white mb-2">导出成功!</h3>
+                                    <p className="text-muted text-sm mb-6">数据库备份已生成</p>
+
+                                    <div className="text-left w-full bg-black/30 p-4 rounded-lg border border-white/5 mb-8 overflow-hidden">
+                                        <div className="text-xs text-muted uppercase tracking-wider mb-1 font-bold">保存路径</div>
+                                        <div className="text-xs text-accent-2 font-mono break-all leading-relaxed">
+                                            {exportSuccess.path}
+                                        </div>
+                                    </div>
+
+                                    <div className="flex gap-3 w-full">
+                                        <button
+                                            onClick={() => setExportSuccess(null)}
+                                            className="flex-1 px-4 py-3 rounded-lg text-sm font-medium text-muted hover:text-white hover:bg-white/5 transition-colors"
+                                        >
+                                            关闭
+                                        </button>
+                                        <button
+                                            onClick={() => {
+                                                api.openFolder(exportSuccess.dir);
+                                                setExportSuccess(null);
+                                            }}
+                                            className="flex-[2] px-4 py-3 rounded-lg text-sm font-bold bg-accent hover:bg-accent-hover text-white shadow-lg shadow-accent/20 transition-all flex items-center justify-center gap-2"
+                                        >
+                                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                                            打开文件夹
+                                        </button>
                                     </div>
                                 </div>
+                            </motion.div>
+                        </div>
+                    )}
+                </AnimatePresence>
 
-                                <div className="flex gap-3 w-full">
-                                    <button
-                                        onClick={() => setExportSuccess(null)}
-                                        className="flex-1 px-4 py-3 rounded-lg text-sm font-medium text-muted hover:text-white hover:bg-white/5 transition-colors"
-                                    >
-                                        关闭
-                                    </button>
-                                    <button
-                                        onClick={() => {
-                                            api.openFolder(exportSuccess.dir);
-                                            setExportSuccess(null);
-                                        }}
-                                        className="flex-[2] px-4 py-3 rounded-lg text-sm font-bold bg-accent hover:bg-accent-hover text-white shadow-lg shadow-accent/20 transition-all flex items-center justify-center gap-2"
-                                    >
-                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
-                                        打开文件夹
-                                    </button>
+
+
+                {/* Export Confirm Modal */}
+                <AnimatePresence>
+                    {exportConfirmOpen && (
+                        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                            <motion.div
+                                initial={{ opacity: 0, scale: 0.95 }}
+                                animate={{ opacity: 1, scale: 1 }}
+                                exit={{ opacity: 0, scale: 0.95 }}
+                                className="bg-panel border border-border rounded-xl shadow-2xl max-w-sm w-full overflow-hidden"
+                                onClick={e => e.stopPropagation()}
+                            >
+                                <div className="p-6">
+                                    <h3 className="text-lg font-bold text-white mb-2">确认导出?</h3>
+                                    <div className="text-sm text-muted leading-relaxed mb-6">
+                                        即将执行本地极速导出。<br />
+                                        文件将保存至 <span className="text-accent-2 font-mono ml-1">Desktop/MUJICA_Backups</span> 目录。
+                                    </div>
+                                    <div className="flex gap-3 justify-end">
+                                        <button
+                                            onClick={() => setExportConfirmOpen(false)}
+                                            className="px-4 py-2 text-sm text-muted hover:text-white hover:bg-white/5 rounded-lg transition-colors border border-transparent hover:border-white/10"
+                                        >
+                                            取消
+                                        </button>
+                                        <button
+                                            onClick={executeExport}
+                                            className="px-4 py-2 text-sm font-bold bg-accent text-white rounded-lg hover:bg-accent-hover transition-colors shadow-lg shadow-accent/20"
+                                        >
+                                            确认导出
+                                        </button>
+                                    </div>
                                 </div>
-                            </div>
-                        </motion.div>
-                    </div>
-                )}
-            </AnimatePresence>
+                            </motion.div>
+                        </div>
+                    )}
+                </AnimatePresence>
 
-
-
-            {/* Export Confirm Modal */}
-            <AnimatePresence>
-                {exportConfirmOpen && (
-                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                        <motion.div
-                            initial={{ opacity: 0, scale: 0.95 }}
-                            animate={{ opacity: 1, scale: 1 }}
-                            exit={{ opacity: 0, scale: 0.95 }}
-                            className="bg-panel border border-border rounded-xl shadow-2xl max-w-sm w-full overflow-hidden"
-                            onClick={e => e.stopPropagation()}
-                        >
-                            <div className="p-6">
-                                <h3 className="text-lg font-bold text-white mb-2">确认导出?</h3>
-                                <div className="text-sm text-muted leading-relaxed mb-6">
-                                    即将执行本地极速导出。<br />
-                                    文件将保存至 <span className="text-accent-2 font-mono ml-1">Desktop/MUJICA_Backups</span> 目录。
-                                </div>
-                                <div className="flex gap-3 justify-end">
-                                    <button
-                                        onClick={() => setExportConfirmOpen(false)}
-                                        className="px-4 py-2 text-sm text-muted hover:text-white hover:bg-white/5 rounded-lg transition-colors border border-transparent hover:border-white/10"
-                                    >
-                                        取消
-                                    </button>
-                                    <button
-                                        onClick={executeExport}
-                                        className="px-4 py-2 text-sm font-bold bg-accent text-white rounded-lg hover:bg-accent-hover transition-colors shadow-lg shadow-accent/20"
-                                    >
-                                        确认导出
-                                    </button>
-                                </div>
-                            </div>
-                        </motion.div>
-                    </div>
-                )}
-            </AnimatePresence>
-
-            <AnimatePresence>
-                {ingestModalOpen && <IngestModal onClose={() => setIngestModalOpen(false)} onIngest={() => { setIngestModalOpen(false); fetchPapers(); fetchStats(); }} />}
-                {selectedPaper && <PaperDetailModal paper={selectedPaper} onClose={() => setSelectedPaper(null)} onDelete={(id) => handleDelete(id)} />}
-            </AnimatePresence>
-        </div >
+                <AnimatePresence>
+                    {ingestModalOpen && <IngestModal onClose={() => setIngestModalOpen(false)} onIngest={() => { setIngestModalOpen(false); fetchPapers(); fetchStats(); }} />}
+                    {selectedPaper && <PaperDetailModal paper={selectedPaper} onClose={() => setSelectedPaper(null)} onDelete={(id) => handleDelete(id)} />}
+                </AnimatePresence>
+            </div>
+        </>
     );
 }
 
@@ -839,7 +864,7 @@ function IngestModal({ onClose, onIngest }) {
     const handleRun = async () => {
         const venueId = getVenueId();
         if (!venueId) {
-            alert('Venue ID 不能为空');
+            showToast('Venue ID 不能为空', 'warning');
             return;
         }
 
