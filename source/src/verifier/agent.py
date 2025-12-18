@@ -370,10 +370,10 @@ Evidence:
 {'存疑论点示例：' + chr(10).join([f'- "{c["claim"]}"' for c in unknown_claims[:3]]) if unknown_claims else ''}
 
 请输出：
-1. 一句话总体评价（用 ✅/⚠️/❌ 开头表示质量等级）
+1. 总体评价（用 ✅/⚠️/❌ 开头表示质量等级）
 2. 主要优点（如有）
 3. 需要改进的地方（如有）
-4. 给作者的具体建议
+
 
 要求：
 - 使用中文
@@ -390,7 +390,7 @@ Evidence:
                     {"role": "system", "content": "你是学术写作质量顾问，擅长给出建设性反馈。"},
                     {"role": "user", "content": ai_summary_prompt}
                 ],
-                max_tokens=500,
+                max_tokens=1000,
             )
             ai_summary = summary_resp.choices[0].message.content.strip()
             comment_lines.append(f"**AI 总评**\n\n{ai_summary}")
