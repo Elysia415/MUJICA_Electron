@@ -864,82 +864,94 @@ def export_kb(background_tasks: BackgroundTasks):
 @app.post("/api/kb/import")
 async def import_kb(file: UploadFile = File(...)):
     """Import and Merge Knowledge Base from ZIP"""
+    import traceback
+    
     if not file.filename.endswith(".zip"):
         raise HTTPException(400, "Only .zip files are supported")
     
-    kb_path = DATA_DIR / "lancedb"
-    kb_path.mkdir(parents=True, exist_ok=True)
-    
-    # 1. Extract ZIP to temp
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        tmp_path = Path(tmp_dir)
-        zip_path = tmp_path / "upload.zip"
+    try:
+        kb_path = DATA_DIR / "lancedb"
+        kb_path.mkdir(parents=True, exist_ok=True)
+        print(f"[Import] kb_path: {kb_path}")
         
-        # Save upload
-        with open(zip_path, "wb") as f:
-            shutil.copyfileobj(file.file, f)
+        # 1. Extract ZIP to temp
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            zip_path = tmp_path / "upload.zip"
             
-        extract_dir = tmp_path / "extracted"
-        extract_dir.mkdir()
+            # Save upload
+            print(f"[Import] Saving upload to: {zip_path}")
+            with open(zip_path, "wb") as f:
+                shutil.copyfileobj(file.file, f)
+            
+            extract_dir = tmp_path / "extracted"
+            extract_dir.mkdir()
+            
+            try:
+                print(f"[Import] Extracting to: {extract_dir}")
+                with zipfile.ZipFile(zip_path, "r") as zf:
+                    zf.extractall(extract_dir)
+            except zipfile.BadZipFile:
+                raise HTTPException(400, "Invalid zip file")
+                 
+            # 2. Merge SQLite (metadata)
+            src_sqlite = extract_dir / "metadata.sqlite"
+            dst_sqlite = kb_path / "metadata.sqlite"
+            
+            if src_sqlite.exists():
+                print(f"[Import] Merging SQLite: {src_sqlite} -> {dst_sqlite}")
+                if not dst_sqlite.exists():
+                    shutil.copy2(src_sqlite, dst_sqlite)
+                else:
+                    try:
+                        _merge_sqlite(str(src_sqlite), str(dst_sqlite))
+                    except Exception as e:
+                        print(f"SQLite merge error: {e}")
+                        raise HTTPException(500, f"Failed to merge metadata: {e}")
         
-        try:
-            with zipfile.ZipFile(zip_path, "r") as zf:
-                zf.extractall(extract_dir)
-        except zipfile.BadZipFile:
-             raise HTTPException(400, "Invalid zip file")
-             
-        # 2. Merge SQLite (metadata)
-        src_sqlite = extract_dir / "metadata.sqlite"
-        dst_sqlite = kb_path / "metadata.sqlite"
-        
-        if src_sqlite.exists():
-            if not dst_sqlite.exists():
-                shutil.copy2(src_sqlite, dst_sqlite)
-            else:
-                try:
-                    _merge_sqlite(str(src_sqlite), str(dst_sqlite))
-                except Exception as e:
-                    print(f"SQLite merge error: {e}")
-                    raise HTTPException(500, f"Failed to merge metadata: {e}")
-        
-        # 3. Merge LanceDB (vectors)
-        if lancedb:
-            for table_name in ["papers", "chunks"]:
-                # LanceDB lib uses folder names like 'papers.lance' usually, but 'open_table' takes name without extension if in managed dir.
-                # Here we operate on raw directories 'papers.lance' and 'chunks.lance'
-                src_tbl_dir = extract_dir / f"{table_name}.lance"
-                dst_tbl_dir = kb_path / f"{table_name}.lance"
-                
-                if src_tbl_dir.exists():
-                    if not dst_tbl_dir.exists():
-                        # Direct copy if not exists
-                        shutil.copytree(src_tbl_dir, dst_tbl_dir)
-                    else:
-                        # Append merge
-                        try:
-                            # Open source as a separate DB connection to extract data
-                            src_db = lancedb.connect(str(extract_dir))
-                            dst_db = lancedb.connect(str(kb_path))
-                            
-                            if table_name in src_db.table_names() and table_name in dst_db.table_names():
-                                src_tbl = src_db.open_table(table_name)
-                                dst_tbl = dst_db.open_table(table_name)
-                                # Append data
-                                # Note: This might duplicate vectors if they are identical. 
-                                # Ideally we should deduplicate by ID, but vector merge is complex.
-                                # For simplicity in "Import", we assume appending is desired or user knows what they do.
-                                # To avoid total duplicates, we can check IDs for 'papers'.
-                                # For 'chunks', it's massive.
+            # 3. Merge LanceDB (vectors)
+            if lancedb:
+                for table_name in ["papers", "chunks"]:
+                    # LanceDB lib uses folder names like 'papers.lance' usually, but 'open_table' takes name without extension if in managed dir.
+                    # Here we operate on raw directories 'papers.lance' and 'chunks.lance'
+                    src_tbl_dir = extract_dir / f"{table_name}.lance"
+                    dst_tbl_dir = kb_path / f"{table_name}.lance"
+                    
+                    if src_tbl_dir.exists():
+                        print(f"[Import] Processing LanceDB table: {table_name}")
+                        if not dst_tbl_dir.exists():
+                            # Direct copy if not exists
+                            shutil.copytree(src_tbl_dir, dst_tbl_dir)
+                        else:
+                            # Append merge
+                            try:
+                                # Open source as a separate DB connection to extract data
+                                src_db = lancedb.connect(str(extract_dir))
+                                dst_db = lancedb.connect(str(kb_path))
                                 
-                                # Simple Append Strategy
-                                dst_tbl.add(src_tbl.to_arrow())
-                        except Exception as e:
-                            print(f"LanceDB merge error for {table_name}: {e}")
-                            # Non-critical? user might just want metadata. But vectors are important.
-                            # We'll allow partial failure but report log.
-                            pass
-        
-    return {"status": "ok", "message": "Import and merge completed"}
+                                if table_name in src_db.table_names() and table_name in dst_db.table_names():
+                                    src_tbl = src_db.open_table(table_name)
+                                    dst_tbl = dst_db.open_table(table_name)
+                                    # Append data - convert to list of dicts for compatibility
+                                    src_data = src_tbl.to_pandas().to_dict('records')
+                                    if src_data:
+                                        print(f"[Import] Merging {len(src_data)} records into {table_name}")
+                                        dst_tbl.add(src_data)
+                            except Exception as e:
+                                import traceback
+                                print(f"LanceDB merge error for {table_name}: {e}")
+                                traceback.print_exc()
+                                # Non-critical - allow partial failure
+                                pass
+            
+            return {"status": "ok", "message": "Import and merge completed"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        print(f"[Import] Fatal error: {e}")
+        traceback.print_exc()
+        raise HTTPException(500, f"Import failed: {str(e)}")
 
 def _merge_sqlite(src_path: str, dst_path: str):
     """Helper to merge SQLite databases using INSERT OR IGNORE"""
