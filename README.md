@@ -2,11 +2,11 @@
   <img src="electron-app/assets/icon.png" alt="MUJICA Logo" width="128" />
 </p>
 
-<h1 align="center">MUJICA Desktop</h1>
+<h1 align="center">MUJICA · 睦鉴</h1>
 
 <p align="center">
   <strong>Multi-stage User-Judged Integration & Corroboration Architecture</strong><br/>
-  基于循证写作专家的学术论文深度分析与综述生成工具
+  一个融合了用户评判与信息佐证的多阶段报告生成架构
 </p>
 
 <p align="center">
