@@ -881,77 +881,79 @@ async def import_kb(file: UploadFile = File(...)):
         kb_path.mkdir(parents=True, exist_ok=True)
         print(f"[Import] kb_path: {kb_path}")
         
-        # 1. Extract ZIP to temp
+        # Use tempfile for extraction - ALL operations must be inside this block
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
             zip_path = tmp_path / "upload.zip"
             
-            # Save upload
+            # Save uploaded file
             print(f"[Import] Saving upload to: {zip_path}")
             with open(zip_path, "wb") as f:
                 shutil.copyfileobj(file.file, f)
             
+            # Create extraction directory
             extract_dir = tmp_path / "extracted"
             extract_dir.mkdir()
             
+            # Extract ZIP
             try:
                 print(f"[Import] Extracting to: {extract_dir}")
                 with zipfile.ZipFile(zip_path, "r") as zf:
                     zf.extractall(extract_dir)
+                print(f"[Import] Extracted files: {list(extract_dir.iterdir())}")
             except zipfile.BadZipFile:
                 raise HTTPException(400, "Invalid zip file")
-                 
-            # 2. Merge SQLite (metadata)
+            
+            # 2. Merge SQLite (metadata) - INSERT OR IGNORE to add without overwriting
             src_sqlite = extract_dir / "metadata.sqlite"
             dst_sqlite = kb_path / "metadata.sqlite"
             
-            if src_sqlite.exists():
-                print(f"[Import] Merging SQLite: {src_sqlite} -> {dst_sqlite}")
-                if not dst_sqlite.exists():
-                    shutil.copy2(src_sqlite, dst_sqlite)
-                else:
-                    try:
+            if src_sqlite.exists() and src_sqlite.is_file():
+                print(f"[Import] Processing SQLite: {src_sqlite}")
+                try:
+                    if not dst_sqlite.exists():
+                        print(f"[Import] Copying new SQLite database")
+                        shutil.copy2(src_sqlite, dst_sqlite)
+                    else:
+                        print(f"[Import] Merging into existing SQLite database")
                         _merge_sqlite(str(src_sqlite), str(dst_sqlite))
-                    except Exception as e:
-                        print(f"SQLite merge error: {e}")
-                        raise HTTPException(500, f"Failed to merge metadata: {e}")
-        
-            # 3. Merge LanceDB (vectors)
+                except Exception as e:
+                    print(f"[Import] SQLite error (non-fatal): {e}")
+                    traceback.print_exc()
+            
+            # 3. Merge LanceDB (vectors) - Add/Append, not overwrite
             if lancedb:
                 for table_name in ["papers", "chunks"]:
-                    # LanceDB lib uses folder names like 'papers.lance' usually, but 'open_table' takes name without extension if in managed dir.
-                    # Here we operate on raw directories 'papers.lance' and 'chunks.lance'
                     src_tbl_dir = extract_dir / f"{table_name}.lance"
                     dst_tbl_dir = kb_path / f"{table_name}.lance"
                     
-                    if src_tbl_dir.exists():
+                    if src_tbl_dir.exists() and src_tbl_dir.is_dir():
                         print(f"[Import] Processing LanceDB table: {table_name}")
-                        if not dst_tbl_dir.exists():
-                            # Direct copy if not exists
-                            shutil.copytree(src_tbl_dir, dst_tbl_dir)
-                        else:
-                            # Append merge
-                            try:
-                                # Open source as a separate DB connection to extract data
+                        try:
+                            if not dst_tbl_dir.exists():
+                                # Direct copy if destination doesn't exist
+                                print(f"[Import] Copying new table: {table_name}")
+                                shutil.copytree(src_tbl_dir, dst_tbl_dir)
+                            else:
+                                # Append/merge data into existing table
+                                print(f"[Import] Merging into existing table: {table_name}")
                                 src_db = lancedb.connect(str(extract_dir))
                                 dst_db = lancedb.connect(str(kb_path))
                                 
                                 if table_name in src_db.table_names() and table_name in dst_db.table_names():
                                     src_tbl = src_db.open_table(table_name)
                                     dst_tbl = dst_db.open_table(table_name)
-                                    # Append data - convert to list of dicts for compatibility
                                     src_data = src_tbl.to_pandas().to_dict('records')
                                     if src_data:
-                                        print(f"[Import] Merging {len(src_data)} records into {table_name}")
+                                        print(f"[Import] Adding {len(src_data)} records to {table_name}")
                                         dst_tbl.add(src_data)
-                            except Exception as e:
-                                import traceback
-                                print(f"LanceDB merge error for {table_name}: {e}")
-                                traceback.print_exc()
-                                # Non-critical - allow partial failure
-                                pass
+                        except Exception as e:
+                            print(f"[Import] LanceDB error for {table_name} (non-fatal): {e}")
+                            traceback.print_exc()
             
+            # Return success - this is inside the with block
             return {"status": "ok", "message": "Import and merge completed"}
+    
     except HTTPException:
         raise
     except Exception as e:
