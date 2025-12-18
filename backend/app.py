@@ -371,6 +371,22 @@ def start_plan(req: PlanRequest, background_tasks: BackgroundTasks):
     final_stats = req.stats or {}
     final_stats.update(enrich_stats)
 
+    # Backend fallback: If frontend sends default/fallback model, use env var instead
+    # This handles cases where frontend fails to load config (e.g., backend not ready yet)
+    model_name = req.model_name
+    fallback_defaults = {'gpt-4o', 'deepseek-chat', ''}  # Known frontend defaults
+    if not model_name or model_name in fallback_defaults:
+        env_model = os.getenv("MUJICA_DEFAULT_MODEL", "")
+        if env_model:
+            print(f"[API /api/plan] Frontend sent '{model_name}', using env fallback: '{env_model}'")
+            model_name = env_model
+        else:
+            model_name = model_name or "deepseek-chat"  # Ultimate fallback
+    
+    # Also fallback base_url and api_key
+    base_url = req.base_url or os.getenv("OPENAI_BASE_URL", "")
+    api_key = req.api_key or os.getenv("OPENAI_API_KEY", "")
+
     # Run in background thread (managed by logic inside job_manager to allow cancellation)
     # But since run_plan_job is synchronous, we wrap it in a thread here
     t = threading.Thread(
@@ -378,9 +394,9 @@ def start_plan(req: PlanRequest, background_tasks: BackgroundTasks):
         kwargs={
             "job": job,
             "user_query": req.query,
-            "model_name": req.model_name,
-            "api_key": req.api_key,
-            "base_url": req.base_url,
+            "model_name": model_name,
+            "api_key": api_key,
+            "base_url": base_url,
             "stats": final_stats
         },
         daemon=True
@@ -394,17 +410,34 @@ def start_plan(req: PlanRequest, background_tasks: BackgroundTasks):
 def start_research(req: ResearchRequest, background_tasks: BackgroundTasks):
     job = manager.create_job("research")
     
+    # Backend fallback for model/api config
+    model_name = req.model_name
+    fallback_defaults = {'gpt-4o', 'deepseek-chat', ''}
+    if not model_name or model_name in fallback_defaults:
+        env_model = os.getenv("MUJICA_DEFAULT_MODEL", "")
+        if env_model:
+            print(f"[API /api/research] Frontend sent '{model_name}', using env fallback: '{env_model}'")
+            model_name = env_model
+        else:
+            model_name = model_name or "deepseek-chat"
+    
+    chat_api_key = req.chat_api_key or os.getenv("OPENAI_API_KEY", "")
+    chat_base_url = req.chat_base_url or os.getenv("OPENAI_BASE_URL", "")
+    embedding_model = req.embedding_model or os.getenv("MUJICA_EMBEDDING_MODEL", "text-embedding-3-small")
+    embedding_api_key = req.embedding_api_key or os.getenv("MUJICA_EMBEDDING_API_KEY", "") or chat_api_key
+    embedding_base_url = req.embedding_base_url or os.getenv("MUJICA_EMBEDDING_BASE_URL", "") or chat_base_url
+    
     t = threading.Thread(
         target=run_research_job,
         kwargs={
             "job": job,
             "plan": req.plan,
-            "model_name": req.model_name,
-            "chat_api_key": req.chat_api_key,
-            "chat_base_url": req.chat_base_url,
-            "embedding_model": req.embedding_model,
-            "embedding_api_key": req.embedding_api_key,
-            "embedding_base_url": req.embedding_base_url,
+            "model_name": model_name,
+            "chat_api_key": chat_api_key,
+            "chat_base_url": chat_base_url,
+            "embedding_model": embedding_model,
+            "embedding_api_key": embedding_api_key,
+            "embedding_base_url": embedding_base_url,
         },
         daemon=True
     )
