@@ -909,17 +909,13 @@ async def import_kb(file: UploadFile = File(...)):
             dst_sqlite = kb_path / "metadata.sqlite"
             
             if src_sqlite.exists() and src_sqlite.is_file():
-                print(f"[Import] Processing SQLite: {src_sqlite}")
-                try:
-                    if not dst_sqlite.exists():
-                        print(f"[Import] Copying new SQLite database")
-                        shutil.copy2(src_sqlite, dst_sqlite)
-                    else:
-                        print(f"[Import] Merging into existing SQLite database")
-                        _merge_sqlite(str(src_sqlite), str(dst_sqlite))
-                except Exception as e:
-                    print(f"[Import] SQLite error (non-fatal): {e}")
-                    traceback.print_exc()
+                print(f"[Import] Processing SQLite: {src_sqlite} ({src_sqlite.stat().st_size / 1024 / 1024:.2f} MB)")
+                if not dst_sqlite.exists():
+                    print(f"[Import] Copying new SQLite database")
+                    shutil.copy2(src_sqlite, dst_sqlite)
+                else:
+                    print(f"[Import] Merging into existing SQLite database")
+                    _merge_sqlite(str(src_sqlite), str(dst_sqlite))
             
             # 3. Merge LanceDB (vectors) - Add/Append, not overwrite
             if lancedb:
@@ -964,36 +960,66 @@ async def import_kb(file: UploadFile = File(...)):
 
 def _merge_sqlite(src_path: str, dst_path: str):
     """Helper to merge SQLite databases using INSERT OR IGNORE"""
+    print(f"[SQLite Merge] Starting: {src_path} -> {dst_path}")
+    
     conn_src = sqlite3.connect(src_path)
     conn_dst = sqlite3.connect(dst_path)
+    conn_dst.row_factory = sqlite3.Row
     
-    # Get all tables from source
-    cursor = conn_src.cursor()
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-    tables = [r[0] for r in cursor.fetchall()]
-    
-    for table in tables:
-        # Read all data
-        df = pd.read_sql_query(f"SELECT * FROM {table}", conn_src)
-        if not df.empty:
-            # Write to dest
-            # method='multi' is faster
-            # if_exists='append' with custom logic for IGNORE is hard in pandas.
-            # We use raw execute for INSERT OR IGNORE
+    try:
+        # Get all tables from source
+        cursor_src = conn_src.cursor()
+        cursor_src.execute("SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';")
+        tables_info = cursor_src.fetchall()
+        
+        print(f"[SQLite Merge] Found {len(tables_info)} tables in source")
+        
+        for table_name, create_sql in tables_info:
+            print(f"[SQLite Merge] Processing table: {table_name}")
             
-            # Generate placeholders (?, ?, ...)
-            cols_count = len(df.columns)
-            placeholders = ",".join(["?"] * cols_count)
-            col_names = ",".join(df.columns)
+            # Check if table exists in destination
+            cursor_dst = conn_dst.cursor()
+            cursor_dst.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
             
-            data = df.values.tolist()
-            # This SQL syntax works for SQLite to ignore duplicates on PRIMARY KEY
-            sql = f"INSERT OR IGNORE INTO {table} ({col_names}) VALUES ({placeholders})"
-            conn_dst.executemany(sql, data)
-            conn_dst.commit()
-    
-    conn_src.close()
-    conn_dst.close()
+            if not cursor_dst.fetchone():
+                # Table doesn't exist - create it using the same schema
+                print(f"[SQLite Merge] Creating table {table_name} in destination")
+                conn_dst.execute(create_sql)
+                conn_dst.commit()
+            
+            # Read data from source
+            cursor_src.execute(f"SELECT * FROM {table_name}")
+            columns = [desc[0] for desc in cursor_src.description]
+            
+            # Batch insert for large tables
+            batch_size = 1000
+            total_inserted = 0
+            
+            while True:
+                rows = cursor_src.fetchmany(batch_size)
+                if not rows:
+                    break
+                
+                placeholders = ",".join(["?"] * len(columns))
+                col_names = ",".join(columns)
+                sql = f"INSERT OR IGNORE INTO {table_name} ({col_names}) VALUES ({placeholders})"
+                
+                conn_dst.executemany(sql, rows)
+                conn_dst.commit()
+                total_inserted += len(rows)
+            
+            print(f"[SQLite Merge] Inserted {total_inserted} rows into {table_name}")
+        
+        print(f"[SQLite Merge] Completed successfully")
+        
+    except Exception as e:
+        print(f"[SQLite Merge] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
+    finally:
+        conn_src.close()
+        conn_dst.close()
 
 if __name__ == "__main__":
     import uvicorn
