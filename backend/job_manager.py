@@ -166,6 +166,12 @@ def run_plan_job(
         print(f"[JobManager] Model: {model_name}, BaseURL: {base_url}")
         
         _job_update(job, status="running", stage="init", message="Initializing Planner...")
+        
+        # Fallback for placeholder model names (user misconfiguration)
+        if "PLACEHOLDER" in model_name.upper():
+            print(f"[JobManager] Warning: Detected placeholder model '{model_name}'. Falling back to 'deepseek-chat'.")
+            model_name = "deepseek-chat"
+            
         # Allow env fallback - frontend might send masked/empty API key
         if api_key:
             api_key = api_key.strip()
@@ -205,6 +211,11 @@ def run_research_job(
 ) -> None:
     try:
         _job_update(job, status="running", stage="init", message="Initializing Research Agents...")
+
+        # Fallback for placeholder model names
+        if "PLACEHOLDER" in model_name.upper():
+            print(f"[JobManager] Warning: Detected placeholder model '{model_name}'. Falling back to 'deepseek-chat'.")
+            model_name = "deepseek-chat"
 
         kb = KnowledgeBase(
             db_path=str(DATA_DIR / "lancedb"),

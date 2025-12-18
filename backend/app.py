@@ -682,6 +682,29 @@ def rename_history_endpoint(cid: str, data: Dict[str, str]):
          raise HTTPException(500, f"Rename failed: {res.get('error')}")
     return {"status": "ok"}
 
+@app.post("/api/open-pdf")
+def open_pdf_endpoint(data: Dict[str, str]):
+    path = data.get("path")
+    if not path:
+        raise HTTPException(400, "Path required")
+    
+    # Security check: ensure path is within allowed directories or just exists
+    p = Path(path)
+    if not p.exists():
+        raise HTTPException(404, "File not found")
+        
+    try:
+        if platform.system() == 'Windows':
+            os.startfile(str(p))
+        elif platform.system() == 'Darwin':
+            subprocess.call(('open', str(p)))
+        else:
+            subprocess.call(('xdg-open', str(p)))
+        return {"status": "opened"}
+    except Exception as e:
+        print(f"Failed to open PDF: {e}")
+        raise HTTPException(500, f"Failed to open file: {e}")
+
 # ---------------------------
 # PDF Viewer API
 # ---------------------------
