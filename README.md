@@ -43,12 +43,14 @@
 
 ### 2. 📝 Agentic 研究工作流
 
-MUJICA 采用多阶段 Agent 架构：
+MUJICA 采用多阶段 Agent 架构，模拟人类研究者的完整思维路径：
+
+<p align="center">
+  <img src="electron-app/assets/stucture.png" alt="MUJICA Workflow Structure" width="800" />
+</p>
 
 ```
 [用户查询] → [Planner Agent] → [Researcher Agent] → [Writer Agent] → [Verifier Agent]
-                  ↓                    ↓                   ↓                  ↓
-             生成调研计划          检索证据片段         撰写综述报告        事实核查
 ```
 
 - **Planner**：将复杂问题拆解为可执行的子课题
