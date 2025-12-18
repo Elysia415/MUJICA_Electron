@@ -72,7 +72,17 @@ a = Analysis(
         'shutil',
         # CRITICAL: dotenv for loading .env file
         'dotenv',
-    ] + collect_submodules('lancedb'),
+        # CRITICAL: Other dependencies
+        'openai',
+        'httpx',
+        'requests',
+        'openreview',
+        'sqlite3',
+        'json',
+        'uuid',
+        'hashlib',
+        'concurrent.futures',
+    ] + collect_submodules('lancedb') + collect_submodules('openreview'),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
