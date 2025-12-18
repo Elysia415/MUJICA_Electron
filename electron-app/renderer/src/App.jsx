@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { api } from './api';
 import { JobStatus } from './components/JobStatus';
-import { MarkdownRenderer } from './components/MarkdownRenderer';
+import { MarkdownRenderer, slugify } from './components/MarkdownRenderer';
 import { KnowledgeBaseView } from './components/KnowledgeBaseView';
 import { SettingsView } from './components/SettingsView';
 import { HistoryView } from './components/HistoryView';
 import { PlanEditor } from './components/PlanEditor';
+import { ReportView } from './components/ReportView';
 import { useTheme } from './components/ThemeProvider';
-import { Send, FileText, Database, PlusCircle, Settings, Play, BookOpen, Search, X, Sun, Moon } from 'lucide-react';
+import { Send, FileText, Database, PlusCircle, Settings, Play, BookOpen, Search, X, Sun, Moon, Download, ExternalLink } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 function App() {
@@ -22,6 +23,7 @@ function App() {
   // Split View State
   const [evidencePanelOpen, setEvidencePanelOpen] = useState(true);
   const [selectedEvidence, setSelectedEvidence] = useState(null);
+  const [kbTargetPaperId, setKbTargetPaperId] = useState(null); // For navigating to KB
 
   // Configuration
   const [config, setConfig] = useState({
@@ -96,19 +98,23 @@ function App() {
 
   const loadHistoryItem = (data) => {
     // Restore state from history snapshot
-    // Note: This is an MVP restoration. Real "resume" might need more state.
-    // We map the snapshot to view state.
+    // Handles both new format (nested in job_result) and old format (flat)
     setQuery('');
-    // Mapping logic: if data defines final_report, show it.
-    // We reconstruct a fake jobState to display the result
+
+    // Extract actual result object
+    // New format: data.job_result
+    // Old format: data itself
+    const resultSource = data.job_result || data;
+
     const restoredJob = {
       status: 'done',
       type: 'research', // Assume research for now
       result: {
-        plan: data.pending_plan,
-        research_notes: data.research_notes,
-        final_report: data.final_report,
-        verification_result: data.verification_result
+        plan: resultSource.plan || resultSource.pending_plan,
+        research_notes: resultSource.research_notes,
+        final_report: resultSource.final_report,
+        verification_result: resultSource.verification_result,
+        report_ref_ctx: resultSource.report_ref_ctx
       }
     };
     setJobState(restoredJob);
@@ -116,9 +122,43 @@ function App() {
     setView('chat');
   };
 
-  // Helper to extract evidence from notes based on chunk_id (used when clicking citations)
-  // For MVP: We just show all evidence in the side panel or filter if implemented.
+  // Helper to extract evidence data
   const researchNotes = jobState?.result?.research_notes || [];
+  const refContext = jobState?.result?.report_ref_ctx;
+  const refItems = refContext?.ref_items || [];
+
+  // Handle citation click from ReportView
+  const handleCitationClick = (refId) => {
+    // 1. Open Evidence Panel
+    setEvidencePanelOpen(true);
+
+    // 2. Find and select the item
+    // refId e.g. "R1"
+    const item = refItems.find(r => r.ref === refId);
+    if (item) {
+      setSelectedEvidence(item);
+      // 3. Scroll to it
+      setTimeout(() => {
+        const el = document.getElementById(`evidence-${refId}`);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          // Optional: Add highlight flash class
+          el.classList.add('bg-accent/20');
+          setTimeout(() => el.classList.remove('bg-accent/20'), 1500);
+        }
+      }, 100);
+    } else {
+      // Fallback: try to match by index if refId is just number (not expected logic but safety)
+      console.warn(`Ref ${refId} not found in catalog.`);
+    }
+  };
+
+  const handleJumpToPaper = (paperId, e) => {
+    e?.stopPropagation();
+    if (!paperId) return;
+    setKbTargetPaperId(paperId);
+    setView('kb');
+  };
 
   return (
     <div className="flex h-screen bg-bg text-text overflow-hidden font-sans">
@@ -215,7 +255,7 @@ function App() {
                     </motion.div>
                   </div>
                 ) : (
-                  <div className="w-full max-w-4xl mx-auto pb-20 flex flex-col min-h-full">
+                  <div className="w-full max-w-[95%] mx-auto pb-20 flex flex-col min-h-full">
                     {/* Job Progress Indicator - show when job is active */}
                     {(activeJobId && (polling || !jobState || jobState?.status === 'running')) && (
                       <div className="flex-1 flex items-start justify-center pt-[15vh]">
@@ -259,52 +299,38 @@ function App() {
                     )}
 
                     {/* Research Report Display */}
-                    {jobState?.status === 'done' && jobState.type === 'research' && (
-                      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-8">
-                        <div className="bg-panel-2 p-8 rounded-xl border border-border shadow-2xl mb-8">
-                          <div className="flex justify-between items-center mb-6 pb-4 border-b border-border">
-                            <h1 className="text-4xl font-bold text-accent-2">
-                              最终报告
-                            </h1>
-                            <button
-                              onClick={() => {
-                                const blob = new Blob([jobState.result.final_report], { type: 'text/markdown' });
-                                const url = URL.createObjectURL(blob);
-                                const a = document.createElement('a');
-                                a.href = url;
-                                a.download = `MUJICA_Report_${Date.now()}.md`;
-                                document.body.appendChild(a);
-                                a.click();
-                                document.body.removeChild(a);
-                              }}
-                              className="px-4 py-2 bg-accent hover:bg-accent-hover text-white rounded-lg flex items-center gap-2 transition-colors"
-                            >
-                              <Download size={18} /> 导出 MD
-                            </button>
-                          </div>
-
-                          <div className="text-lg leading-relaxed content-markdown">
-                            <MarkdownRenderer content={jobState.result.final_report} />
-                          </div>
-
-                          {/* Verification Results */}
-                          {jobState.result.verification_result && (
-                            <div className="mt-8 pt-8 border-t border-border">
-                              <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
-                                <span className="text-green-400">✓</span> 验证报告
-                              </h3>
-                              <div className="bg-black/30 p-6 rounded-lg font-mono text-sm whitespace-pre-wrap border border-white/5">
-                                <div className="text-lg font-bold text-accent mb-4 border-b border-white/10 pb-2">
-                                  信任评分: {jobState.result.verification_result.score}/10
-                                </div>
-                                <div className="text-muted leading-relaxed">
-                                  {jobState.result.verification_result.comment || "暂无详细评语"}
-                                </div>
-                              </div>
-                            </div>
-                          )}
+                    {/* Error View */}
+                    {jobState?.status === 'error' && (
+                      <div className="flex flex-col items-center justify-center p-8 mt-20 text-center">
+                        <div className="text-6xl mb-4">❌</div>
+                        <h2 className="text-2xl font-bold text-red-500 mb-2">任务执行出错</h2>
+                        <div className="bg-red-500/10 border border-red-500/30 p-4 rounded-lg max-w-2xl text-left font-mono text-sm text-red-300 whitespace-pre-wrap">
+                          {jobState.error || jobState.message || "未知错误"}
                         </div>
-                      </motion.div>
+                        <button
+                          onClick={() => { setActiveJobId(null); setJobState(null); }}
+                          className="mt-8 px-6 py-2 bg-white/10 hover:bg-white/20 rounded transition"
+                        >
+                          返回首页
+                        </button>
+                      </div>
+                    )}
+
+
+
+                    {/* Research Report Display */}
+                    {jobState?.status === 'done' && (
+                      <div className="mt-8 relative w-full">
+                        {jobState.type === 'research' && (
+                          <div className="h-[85vh]">
+                            <ReportView
+                              report={jobState.result.final_report}
+                              verificationResult={jobState.result.verification_result}
+                              onCitationClick={handleCitationClick}
+                            />
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
                 )}
@@ -318,22 +344,64 @@ function App() {
                     <button onClick={() => setEvidencePanelOpen(false)} className="md:hidden"><X /></button>
                   </div>
                   <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
-                    {researchNotes.length === 0 ? (
-                      <div className="text-muted text-sm text-center mt-10">暂无证据。</div>
-                    ) : (
+                    {/* Check if we have structured Ref Items (Preferred) */}
+                    {refItems.length > 0 ? (
                       <div className="space-y-4">
-                        {researchNotes.map((section, idx) => (
-                          <div key={idx} className="space-y-2">
-                            <h4 className="text-xs font-bold uppercase text-muted tracking-wider">{section.section}</h4>
-                            {section.evidence?.map((ev, ei) => (
-                              <div key={ei} className="bg-white/5 p-3 rounded text-sm border border-white/10 hover:border-accent/50 transition-colors cursor-pointer" onClick={() => setSelectedEvidence(ev)}>
-                                <div className="font-bold text-accent-2 mb-1 line-clamp-1">{ev.source || 'Source'}</div>
-                                <div className="line-clamp-3 text-muted">{ev.text}</div>
+                        {refItems.map((ref, idx) => (
+                          <div
+                            key={idx}
+                            id={`evidence-${ref.ref}`}
+                            className={`p-3 rounded text-sm border transition-all cursor-pointer group
+                                        ${selectedEvidence?.ref === ref.ref
+                                ? 'bg-accent/10 border-accent shadow-[0_0_10px_rgba(var(--accent-rgb),0.1)]'
+                                : 'bg-white/5 border-white/10 hover:border-accent/50'
+                              }`}
+                            onClick={() => setSelectedEvidence(ref)}
+                          >
+                            <div className="flex justify-between items-start mb-1 gap-2">
+                              <div className="font-bold text-accent-2 bg-white/5 px-1.5 rounded text-xs leading-5 whitespace-nowrap">
+                                {ref.ref}
                               </div>
-                            ))}
+                              {/* Jump Button */}
+                              <button
+                                onClick={(e) => handleJumpToPaper(ref.paper_id, e)}
+                                className="text-muted hover:text-accent p-1 hover:bg-white/10 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                                title="跳转到知识库详情"
+                              >
+                                <ExternalLink size={14} />
+                              </button>
+                            </div>
+                            <div className="text-xs font-semibold text-text mb-1 line-clamp-2" title={ref.title}>
+                              {ref.title || 'Unknown Title'}
+                            </div>
+                            <div className="text-xs text-muted font-mono mb-2 truncate">
+                              {ref.paper_id} · {ref.source}
+                            </div>
+                            <div className="line-clamp-4 text-muted text-xs leading-relaxed border-t border-white/5 pt-2 mt-2">
+                              {ref.text}
+                            </div>
                           </div>
                         ))}
                       </div>
+                    ) : (
+                      // Fallback to raw notes if ref_items missing
+                      researchNotes.length === 0 ? (
+                        <div className="text-muted text-sm text-center mt-10">暂无证据。</div>
+                      ) : (
+                        <div className="space-y-4">
+                          {researchNotes.map((section, idx) => (
+                            <div key={idx} className="space-y-2">
+                              <h4 className="text-xs font-bold uppercase text-muted tracking-wider">{section.section}</h4>
+                              {section.evidence?.map((ev, ei) => (
+                                <div key={ei} className="bg-white/5 p-3 rounded text-sm border border-white/10 hover:border-accent/50 transition-colors cursor-pointer" onClick={() => setSelectedEvidence(ev)}>
+                                  <div className="font-bold text-accent-2 mb-1 line-clamp-1">{ev.source || 'Source'}</div>
+                                  <div className="line-clamp-3 text-muted">{ev.text}</div>
+                                </div>
+                              ))}
+                            </div>
+                          ))}
+                        </div>
+                      )
                     )}
                   </div>
                 </div>
@@ -342,7 +410,7 @@ function App() {
           )}
 
           {view === 'history' && <HistoryView onLoad={loadHistoryItem} />}
-          {view === 'kb' && <KnowledgeBaseView />}
+          {view === 'kb' && <KnowledgeBaseView initialPaperId={kbTargetPaperId} />}
         </div>
       </div>
 

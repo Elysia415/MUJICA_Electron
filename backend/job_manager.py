@@ -4,6 +4,7 @@ import traceback
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+from fastapi.encoders import jsonable_encoder
 
 from src.utils.llm import get_llm_client
 from src.data_engine.storage import KnowledgeBase
@@ -244,9 +245,16 @@ def run_research_job(
                      "report_ref_ctx": ref_ctx
                 }
             }
-            save_conversation(job.job_id, snapshot)
+            save_conversation(job.job_id, jsonable_encoder(snapshot))
         except Exception as history_error:
             print(f"[JobManager] Failed to save history: {history_error}")
+            try:
+                from backend.debug_tools import log_exception, log_debug
+                log_debug(f"Verification result type: {type(verification)}")
+                log_debug(f"Verification keys: {verification.keys() if isinstance(verification, dict) else 'Not Dict'}")
+                log_exception(history_error, "save_conversation")
+            except:
+                pass
 
     except MujicaCancelled as e:
         _job_update(job, status="cancelled", stage="cancelled", message="Cancelled", error=str(e), finished_ts=time.time())

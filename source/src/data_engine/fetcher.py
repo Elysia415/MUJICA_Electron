@@ -421,12 +421,13 @@ class ConferenceDataFetcher:
                         text_parts.append(f"Weaknesses:\n{weaknesses.strip()}")
                     for k, ss in extra_pairs:
                         text_parts.append(f"{k}:\n{ss}")
-                    review_text = "\n\n".join([x for x in text_parts if x]).strip()
+                    # FORCE STRING CONVERSION: Defensive coding against non-string items
+                    review_text = "\n\n".join([str(x) for x in text_parts if x]).strip()
 
                     review_data = {
-                        'rating_raw': rating_raw if rating_raw is not None else 'N/A',
+                        'rating_raw': str(rating_raw) if rating_raw is not None else 'N/A',
                         'rating': self._parse_numeric_score(rating_raw),
-                        'confidence_raw': confidence_raw if confidence_raw is not None else 'N/A',
+                        'confidence_raw': str(confidence_raw) if confidence_raw is not None else 'N/A',
                         'confidence': self._parse_numeric_score(confidence_raw),
                         'summary': summary,
                         'strengths': strengths,

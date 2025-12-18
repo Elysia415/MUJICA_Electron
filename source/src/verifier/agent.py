@@ -29,13 +29,33 @@ class VerifierAgent:
     _CHUNK_ONLY_RE = re.compile(r"\[([^\[\]\s]+::[^\[\]\s]+::\d+)\]")
     _REF_RE = re.compile(r"\[(R\d+)\]")
     _REF_SECTION_RE = re.compile(r"(?im)^\s*#{1,6}\s+(references|参考文献)\s*$")
+    # Unicode superscript pattern: ⁽ᴿ⁴⁰⁾ or ⁽ᴿ¹⁰,ᴿ⁵⁾ etc.
+    _UNICODE_SUP_RE = re.compile(r"\u207d([\u1d3f\u00b9\u00b2\u00b3\u2070-\u2079,]+)\u207e")
+    # Map Unicode superscript digits to ASCII
+    _SUP_DIGIT_MAP = {
+        '\u2070': '0', '\u00b9': '1', '\u00b2': '2', '\u00b3': '3',
+        '\u2074': '4', '\u2075': '5', '\u2076': '6', '\u2077': '7',
+        '\u2078': '8', '\u2079': '9', '\u1d3f': 'R', ',': ','
+    }
 
     def __init__(self, llm_client, model: str = "gpt-4o"):
         self.llm = llm_client
         self.model = model
 
+    def _normalize_superscript_refs(self, text: str) -> str:
+        """Convert Unicode superscript citations like ⁽ᴿ⁴⁰⁾ to [R40] format."""
+        def replace_match(m):
+            inner = m.group(1)
+            normalized = ''.join(self._SUP_DIGIT_MAP.get(c, c) for c in inner)
+            # Handle comma-separated refs: R40,R5,R44 -> [R40][R5][R44]
+            refs = [r.strip() for r in normalized.split(',') if r.strip()]
+            return ''.join(f'[{r}]' for r in refs)
+        return self._UNICODE_SUP_RE.sub(replace_match, text)
+
     def _extract_claims(self, report_text: str, *, ref_map: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:
         text = (report_text or "").replace("\r\n", "\n")
+        # Normalize Unicode superscript citations first
+        text = self._normalize_superscript_refs(text)
 
         # 忽略 References/参考文献 小节（避免把引用清单当成 claims 去核查）
         m = self._REF_SECTION_RE.search(text)
@@ -139,6 +159,7 @@ class VerifierAgent:
                     "is_valid": True,
                     "score": 0.5,
                     "notes": "检测到引用标记（Ref ID），但未能抽取可核查的句级 claims；跳过逐句 NLI。",
+                    "comment": "⚠️ **验证未完成**\n检测到引用标记（Ref ID），但未能抽取可核查的句级论点。可能是引用格式不规范或位于参考文献段落之外。",
                     "stats": {"unique_refs": len(set([c.strip() for c in refs]))},
                 }
             if chunk_only:
@@ -146,12 +167,14 @@ class VerifierAgent:
                     "is_valid": True,
                     "score": 0.5,
                     "notes": "检测到 chunk-level 引用（chunk_id-only），但未能抽取可核查的句级 claims；跳过逐句 NLI。",
+                    "comment": "⚠️ **验证未完成**\n检测到 Chunk 级引用，但未能抽取可核查的句级论点。请确保引用标记紧跟在事实陈述之后。",
                     "stats": {"unique_chunk_citations": len(set([c.strip() for c in chunk_only]))},
                 }
             return {
                 "is_valid": True,
                 "score": 0.5,
                 "notes": "仅检测到 paper-level 引用（未提供 chunk 级证据），跳过逐句 NLI 核查。",
+                "comment": "⚠️ **验证未完成**\n仅检测到论文级引用（Paper ID），未提供具体的 Evidence Chunk，无法进行深度事实核查。",
                 "stats": {"unique_paper_citations": len(set([c.strip() for c in citations]))},
             }
 
@@ -256,6 +279,7 @@ Evidence:
 
             label = str(parsed.get("label", "unknown")).lower().strip()
             score = float(parsed.get("score", 0.0) or 0.0)
+            if score != score: score = 0.0  # Handle NaN
             reason = str(parsed.get("reason", ""))
 
             if label == "contradicted":
@@ -264,10 +288,13 @@ Evidence:
                 supports += 1
             scores.append(max(0.0, min(1.0, score)))
 
+            # Convert List[Dict] to List[str] for display: extract ref or chunk_id
+            cited_refs = [str(c.get("ref") or c.get("chunk_id", "?")) for c in cited_chunks if isinstance(c, dict)]
+
             evaluations.append(
                 {
                     "claim": claim,
-                    "citations": cited_chunks,
+                    "citations": cited_refs,  # Now List[str], safe for join()
                     "label": label,
                     "score": score,
                     "reason": reason,
@@ -275,38 +302,68 @@ Evidence:
             )
 
         overall = sum(scores) / len(scores) if scores else 0.0
+        if overall != overall: overall = 0.0  # Handle NaN
         # Scale to 0-10
         final_score = round(overall * 10, 1)
         
+        # Scale score to 0-10 for UI display
+        final_score = round(overall * 10, 1)
+        if final_score != final_score: final_score = 0.0
         is_valid = (overall >= 0.7) and (contradicts == 0)
 
-        notes = f"checked={len(evaluations)}, supports={supports}, contradicts={contradicts}, score={overall:.2f}"
+        notes = f"checked={len(evaluations)}, supports={supports}, contradicts={contradicts}, score={final_score}/10"
         
         comment_lines = [f"**核查摘要**：共检验了 {len(evaluations)} 个关键论点。"]
-        comment_lines.append(f"- ✅ 支持: {supports} | ⚠️ 存疑: {len(evaluations) - supports - contradicts} | ❌ 冲突: {contradicts}")
+        comment_lines.append(f"✅ 支持: {supports} | ⚠️ 存疑: {len(evaluations) - supports - contradicts} | ❌ 冲突: {contradicts}")
         comment_lines.append("")
-        if contradicts > 0:
+        
+        # 分类整理验证结果
+        contradicted_claims = [ev for ev in evaluations if ev["label"] == "contradicted"]
+        supported_claims = [ev for ev in evaluations if ev["label"] == "entailed"]
+        unknown_claims = [ev for ev in evaluations if ev["label"] not in ("contradicted", "entailed")]
+        
+        # 1) 冲突论点（优先显示，因为风险最高）
+        if contradicted_claims:
             comment_lines.append("### ❌ 发现冲突（幻觉风险）")
-            for ev in evaluations:
-                if ev["label"] == "contradicted":
-                    claim_short = ev['claim'][:50] + "..." if len(ev['claim']) > 50 else ev['claim']
-                    comment_lines.append(f"- \"{claim_short}\"")
-                    comment_lines.append(f"  原因: {ev['reason']}")
-        supported_claims = [ev for ev in evaluations if ev["label"] == "supported"]
+            for idx, ev in enumerate(contradicted_claims, 1):
+                refs = ", ".join(str(c) for c in ev['citations']) if ev['citations'] else "无"
+                comment_lines.append(f'**{idx}. 论点**: "{ev["claim"]}"')
+                comment_lines.append(f"   - **引用**: {refs}")
+                comment_lines.append(f"   - **原因**: {ev['reason']}")
+                comment_lines.append("")
+        
+        # 2) 存疑论点
+        if unknown_claims:
+            comment_lines.append("### ⚠️ 存疑论点（证据不充分）")
+            for idx, ev in enumerate(unknown_claims, 1):
+                refs = ", ".join(str(c) for c in ev['citations']) if ev['citations'] else "无"
+                comment_lines.append(f'**{idx}. 论点**: "{ev["claim"]}"')
+                comment_lines.append(f"   - **引用**: {refs}")
+                comment_lines.append(f"   - **原因**: {ev['reason']}")
+                comment_lines.append("")
+        
+        # 3) 已验证论点（完整展示，不再限制5条）
         if supported_claims:
-            comment_lines.append("### ✅ 部分已验证论点")
-            for ev in supported_claims[:5]:
-                claim_short = ev['claim'][:40] + "..." if len(ev['claim']) > 40 else ev['claim']
-                refs = ", ".join(ev['citations'][:2]) if ev['citations'] else "无"
-                comment_lines.append(f"- \"{claim_short}\" (引用: {refs})")
-            if len(supported_claims) > 5:
-                comment_lines.append(f"  ...及其他 {len(supported_claims) - 5} 条")
+            comment_lines.append("### ✅ 已验证论点")
+            for idx, ev in enumerate(supported_claims, 1):
+                refs = ", ".join(str(c) for c in ev['citations']) if ev['citations'] else "无"
+                comment_lines.append(f'**{idx}. 论点**: "{ev["claim"]}"')
+                comment_lines.append(f"   - **引用**: {refs}")
+                comment_lines.append(f"   - **原因**: {ev['reason']}")
+                comment_lines.append("")
+        
+        # 总评
+        comment_lines.append("---")
         if overall >= 0.8 and contradicts == 0:
-            comment_lines.append("\n**总评**: ✅ 引用一致性优秀")
+            comment_lines.append("**总评**: ✅ 引用一致性优秀，报告内容可信度高")
         elif contradicts > 0:
-            comment_lines.append("\n**总评**: ❌ 存在幻觉风险，建议复核")
+            comment_lines.append("**总评**: ❌ 存在幻觉风险，建议复核上述冲突论点")
         else:
-            comment_lines.append("\n**总评**: ⚠️ 部分论点证据不足")
+            comment_lines.append("**总评**: ⚠️ 部分论点证据不足，建议补充引用来源")
+        
+        # Debug: confirm new code is running
+        print(f"[VerifierAgent] score={final_score}/10, comment_len={len(''.join(comment_lines))}")
+        
         return {
             "is_valid": is_valid,
             "score": final_score,

@@ -27,7 +27,7 @@ data/
 *.db
 *.sqlite
 *.sqlite3
-*.lancedb/
+*.lance/
 
 # Electron Builder Output
 release/
@@ -43,3 +43,5 @@ Thumbs.db
 
 .history/
 backup_legacy/
+
+source copy/

@@ -15,19 +15,8 @@ class WriterAgent:
         self.llm = llm_client
         self.model = model
 
-    _REF_RE = re.compile(r"\[(R\d+)\]")
-    _REF_SECTION_RE = re.compile(r"(?im)^\s*#{1,6}\s+(references|参考文献)\s*$")
+    _REF_RE = re.compile(r"\[((?:R\d+\s*[,，、]\s*)*R\d+)\]")
     _SENT_SPLIT_RE = re.compile(r"(?<=[。！？.!?])\s+")
-
-    def _strip_references_section(self, text: str) -> str:
-        """
-        防御性处理：如果模型自己输出了 References/参考文献，小节会与我们自动生成的 References 重复。
-        """
-        s = (text or "").replace("\r\n", "\n")
-        m = self._REF_SECTION_RE.search(s)
-        if not m:
-            return s.strip()
-        return s[: m.start()].rstrip()
 
     def _build_ref_catalog(self, research_notes: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
@@ -68,15 +57,32 @@ class WriterAgent:
         return {"ref_items": ref_items, "chunk_to_ref": chunk_to_ref, "ref_map": ref_map}
 
     def _render_references(self, report_text: str, ref_items: List[Dict[str, Any]]) -> str:
-        used: List[str] = []
+        """
+        解析正文中的 [R1], [R1, R2] 等格式，生成去重的 References 列表。
+        """
+        used_refs: List[str] = []
         seen = set()
-        for rid in self._REF_RE.findall(report_text or ""):
-            if rid in seen:
-                continue
-            seen.add(rid)
-            used.append(rid)
+        
+        # 解析所有引用
+        matches = self._REF_RE.findall(report_text or "")
+        for group in matches:
+            # group 可能是 "R1" 或 "R1, R2"
+            # Split by common separators
+            single_refs = re.split(r"[,，、]\s*", group)
+            for r in single_refs:
+                r = r.strip()
+                if not r or r in seen:
+                    continue
+                seen.add(r)
+                used_refs.append(r)
 
-        if not used:
+        # Sort refs numerically (R1, R2, R10...) not lexically (R1, R10, R2)
+        try:
+            used_refs.sort(key=lambda x: int(x[1:]) if x[1:].isdigit() else 0)
+        except Exception:
+            used_refs.sort()
+
+        if not used_refs:
             return ""
 
         by_ref = {it.get("ref"): it for it in (ref_items or []) if it.get("ref")}
@@ -99,8 +105,8 @@ class WriterAgent:
                 "rebuttal": "作者 Rebuttal/Response",
             }.get(s, s or "unknown")
 
-        lines = ["", "## References", ""]
-        for rid in used:
+        lines = ["", "### 参考文献", ""]
+        for rid in used_refs:
             it = by_ref.get(rid) or {}
             title = (it.get("title") or "").strip() or "（无标题）"
             src = _source_label(str(it.get("source") or ""))
@@ -112,12 +118,13 @@ class WriterAgent:
 
             snippet = (it.get("text") or "").strip()
             snippet = re.sub(r"\s+", " ", snippet)
-            if len(snippet) > 240:
-                snippet = snippet[:240].rstrip() + "…"
+            # 增加一点长度限制，防止展示太少。但也不要太长。
+            if len(snippet) > 300:
+                snippet = snippet[:300].rstrip() + "…"
 
             loc = f"{src}" + (f" · 片段 {cidx_disp}" if cidx_disp is not None else "")
-            # 不在报告中暴露 paper_id/chunk_id（用户嫌太“工程”）；需要溯源可在右侧 Evidence 面板查看
-            lines.append(f"- **[{rid}]《{title}》**：{loc} — {snippet}")
+            # 展示 Ref ID，并在列表中使用 Markdown 格式
+            lines.append(f"- **[{rid}]《{title}》**：{loc}\n  > {snippet}")
 
         return "\n".join(lines).rstrip() + "\n"
 
@@ -220,16 +227,20 @@ class WriterAgent:
 你的目标：基于提供的研究笔记与 Evidence Snippets，撰写一篇**深度、连贯、长篇**的学术综述报告。
 
 严格规则（必须遵守）：
-1) 【循证原则】只能使用输入中的信息；不允许编造。每一个事实性陈述必须附上 Ref ID，如 [R1]。
-2) 【格式规范】引用必须使用 [R#] 格式。禁止出现 paper_id/chunk_id。禁止生成 References 小节（系统会自动补全）。
-3) 【篇幅与深度】拒绝简短的总结。请深入分析证据细节，逻辑要连贯。整篇报告应像一篇高质量的 Survey Paper。
-4) 【禁止开场白】直接输出报告正文，禁止任何"好的，我将..."、"请注意..."、"以下是..."等开头语。报告第一行必须是标题。
+1) 【排版格式 - 关键】**必须使用标准的 Markdown 标题语法**（如 `## 核心发现`、`### 创新性分析`）来区分章节。**绝对禁止**使用加粗（如 `**1. 核心发现**`）来代替标题。
+2) 【循证原则 - 防幻觉】**严格基于提供的证据（Evidence）**进行写作。
+   - 每一个事实性陈述必须附上 Ref ID，如 [R1]。
+   - 如果证据中没有提及某事，**绝对不要编造**。
+   - 不要为了通顺而添加证据中不存在的细节。
+3) 【引用规范】引用必须使用 [R#] 格式。禁止出现 paper_id/chunk_id。禁止生成 References 小节（系统会自动补全）。
+4) 【篇幅与深度】拒绝简短的总结。请深入分析证据细节，逻辑要连贯。整篇报告应像一篇高质量的 Survey Paper。
+5) 【禁止开场白】直接输出报告正文，禁止任何"好的，我将..."、"请注意..."、"以下是..."等开头语。报告第一行必须是标题（# 标题）。
 
 写作风格要求：
-4) 【连贯性】不要机械地堆砌“本章节结论概述”。请将各个章节的内容有机融合，使用流畅的过渡句。
-5) 【结构化】文章应包含引言（背景与目标）、核心发现（分类讨论）、详细案例分析、以及结论。使用描述性的 H2/H3 标题（如“高分论文的创新性特征”），而不是“第一部分总结”。
-6) 【洞察力】在对比分析时（如高分 vs 低分），不要只列出不同点，要分析背后的**评审逻辑**（例如：为何某些缺点导致绝杀，而某些缺点可被容忍？）。
-7) 【证据细节】在论述关键观点时，请直接引用证据中的具体措辞或案例（配合 [R#]），增强说服力。引用应具体到“根据评审 R1 所述...[R1]”。
+6) 【连贯性】不要机械地堆砌“本章节结论概述”。请将各个章节的内容有机融合，使用流畅的过渡句。
+7) 【结构化】文章应包含引言（背景与目标）、核心发现（分类讨论）、详细案例分析、以及结论。确保层级分明（使用 ## 和 ###）。
+8) 【适度洞察】在对比分析时，应基于证据提供的线索进行合理推断，**避免无中生有的过度臆测**。分析评审逻辑时，引用具体的评审意见作为支撑。
+9) 【证据细节】在论述关键观点时，请直接引用证据中的具体措辞或案例（配合 [R#]），增强说服力。引用应具体到“根据评审 R1 所述...[R1]”。
 
 目标字数：如果证据充足，请尽量写出一篇详尽的报告（2000字以上），能够作为该领域的深度参考资料。
 """
@@ -275,22 +286,11 @@ Sections (JSON):
             total_tokens = getattr(usage, "total_tokens", None) if usage is not None else None
 
             body = response.choices[0].message.content or ""
-            body = self._strip_references_section(body)
             
             # Strip common AI preambles that shouldn't appear in final report
-            preamble_lines_to_skip = 0
-            lines = body.split("\n")
-            for i, line in enumerate(lines):
-                ln = line.strip()
-                if not ln:
-                    continue
-                # Check for preamble patterns
-                if any(ln.startswith(p) for p in ["好的", "请注意", "以下是", "基于您", "我会", "我将"]):
-                    preamble_lines_to_skip = i + 1
-                else:
-                    break  # Stop at first non-preamble line
-            if preamble_lines_to_skip > 0:
-                body = "\n".join(lines[preamble_lines_to_skip:]).lstrip()
+            # Strip common AI preambles (relying on system prompt mostly now)
+            # Reverted explicit stripping loop to avoid accidental truncation
+            body = body.strip()
             
             # Normalize citation formats to [R#] before processing
             body = re.sub(r"[（(]R(\d+)[)）]", r"[R\1]", body)  # (R1) or （R1）
@@ -301,14 +301,27 @@ Sections (JSON):
             
             # Convert [R1] -> ⁽ᴿ¹⁾ (Unicode Superscript)
             # This avoids needing frontend to support HTML <sup> tags
+            # Convert [R1] or [R1, R2] -> ⁽ᴿ¹⁾ or ⁽ᴿ¹˒ᴿ²⁾
+            # This avoids needing frontend to support HTML <sup> tags
             def _to_super(m):
-                rid = m.group(1) # e.g. "R12"
+                content = m.group(1) # e.g. "R12" or "R1, R2"
                 # Map digits to superscript
                 upload_map = str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹")
-                num_part = rid[1:].translate(upload_map)
-                return f"⁽ᴿ{num_part}⁾"
+                
+                parts = []
+                for ref in re.split(r"[,，]\s*", content):
+                    ref = ref.strip()
+                    if ref.upper().startswith("R"):
+                        num_part = ref[1:].translate(upload_map)
+                        parts.append(f"ᴿ{num_part}")
+                
+                if not parts:
+                    return m.group(0)
+                    
+                return f"⁽{','.join(parts)}⁾"
 
-            body_display = re.sub(r"\[(R\d+)\]", _to_super, body)
+            # Match [R1], [R1, R2], [R1,R2,R3]
+            body_display = re.sub(r"\[((?:R\d+\s*[,，]\s*)*R\d+)\]", _to_super, body)
             
             final = (body_display.rstrip() + "\n" + refs_md).strip() + "\n"
 

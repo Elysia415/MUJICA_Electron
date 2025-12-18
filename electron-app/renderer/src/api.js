@@ -14,10 +14,42 @@ export const api = {
 
     // Knowledge Base
     listPapers: (limit = 100, search = null) => axios.get(`${API_BASE}/kb/papers`, { params: { limit, search } }),
+    semanticSearchPapers: (query, limit = 20) => axios.get(`${API_BASE}/kb/semantic-search`, { params: { query, limit } }),
     getPaperDetail: (paperId) => axios.get(`${API_BASE}/kb/paper/${paperId}`),
     deletePaper: (paperId) => axios.post(`${API_BASE}/kb/delete`, null, { params: { paper_id: paperId } }),
     getKBStats: () => axios.get(`${API_BASE}/kb/stats`),
     refreshKB: () => axios.post(`${API_BASE}/kb/refresh`),
+    exportKB: (onProgress) => axios.get(`${API_BASE}/kb/export`, {
+        responseType: 'blob',
+        onDownloadProgress: onProgress
+    }),
+    exportKBLocal: async (onProgress) => {
+        const response = await fetch(`${API_BASE}/kb/export_local`);
+        if (!response.ok) throw new Error("Export failed to start");
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const chunk = decoder.decode(value);
+            const lines = chunk.split('\n');
+            for (const line of lines) {
+                if (!line.trim()) continue;
+                try {
+                    const data = JSON.parse(line);
+                    onProgress(data);
+                } catch (e) {
+                    // Ignore partial
+                }
+            }
+        }
+    },
+    openFolder: (path) => axios.post(`${API_BASE}/system/open_folder`, { path }),
+    importKB: (formData, onProgress) => axios.post(`${API_BASE}/kb/import`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        onUploadProgress: onProgress
+    }),
 
     // Job Control
     cancelJob: (jobId) => axios.post(`${API_BASE}/job/${jobId}/cancel`),
@@ -31,4 +63,7 @@ export const api = {
     getHistory: (cid) => axios.get(`${API_BASE}/history/${cid}`),
     deleteHistory: (cid) => axios.delete(`${API_BASE}/history/${cid}`),
     renameHistory: (cid, title) => axios.post(`${API_BASE}/history/${cid}/rename`, { title }),
+
+    // PDF Viewer
+    openPdf: (pdfPath) => axios.post(`${API_BASE}/open-pdf`, { pdf_path: pdfPath }),
 };

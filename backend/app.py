@@ -2,9 +2,25 @@ import sys
 import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Any
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Query
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Query, UploadFile, File
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+import zipfile
+import shutil
+import tempfile
+import datetime
+import io
+import os
+import json
+import sqlite3
+# Try importing lancedb, but don't crash if missing (though it should be there)
+try:
+    import lancedb
+    import pyarrow as pa
+except ImportError:
+    lancedb = None
+    pass
 
 # ---------------------------
 # Path Setup
@@ -52,6 +68,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Length", "Content-Disposition"],
 )
 
 # ---------------------------
@@ -371,11 +388,8 @@ def get_kb_stats():
 @app.post("/api/job/{job_id}/cancel")
 def cancel_job(job_id: str):
     """Cancel a running job"""
-    if job_id in jobs:
-        job = jobs[job_id]
-        if hasattr(job, "cancel_event"):
-            job.cancel_event.set()
-            return {"ok": True, "message": "Cancel signal sent"}
+    if manager.cancel_job(job_id):
+        return {"ok": True, "message": "Cancel signal sent"}
     return {"ok": False, "message": "Job not found or not cancellable"}
 
 # ---------------------------
@@ -413,6 +427,59 @@ def list_papers(limit: int = 100, search: Optional[str] = None):
     
     rows = cur.execute(query, params).fetchall()
     return {"papers": [dict(r) for r in rows]}
+
+@app.get("/api/kb/semantic-search")
+def semantic_search_papers(query: str = Query(..., min_length=1), limit: int = 20):
+    """
+    Semantic search using vector embeddings.
+    Returns papers ranked by similarity to the query.
+    """
+    from src.data_engine.storage import KnowledgeBase
+    
+    kb = get_kb(force_refresh=True)
+    
+    try:
+        # Use search_chunks for chunk-level semantic search
+        results = kb.search_chunks(query, limit=limit)
+        
+        # Deduplicate by paper_id and aggregate scores
+        papers_map = {}
+        for r in results:
+            paper_id = r.get("paper_id")
+            if not paper_id:
+                continue
+            
+            distance = r.get("_distance", 1.0)
+            # Convert distance to similarity (LanceDB uses L2 distance)
+            similarity = max(0, 1 - distance) if distance else 0.5
+            
+            if paper_id not in papers_map:
+                papers_map[paper_id] = {
+                    "id": paper_id,
+                    "title": r.get("title", ""),
+                    "year": r.get("year"),
+                    "venue_id": r.get("venue_id"),
+                    "decision": r.get("decision"),
+                    "rating": r.get("rating"),
+                    "similarity": similarity,
+                    "matched_chunk": r.get("text", "")[:200] + "..." if r.get("text") else "",
+                    "source": r.get("source", ""),
+                }
+            else:
+                # Keep the higher similarity score
+                if similarity > papers_map[paper_id]["similarity"]:
+                    papers_map[paper_id]["similarity"] = similarity
+                    papers_map[paper_id]["matched_chunk"] = r.get("text", "")[:200] + "..." if r.get("text") else ""
+        
+        # Sort by similarity descending
+        papers = sorted(papers_map.values(), key=lambda x: x["similarity"], reverse=True)
+        
+        return {"papers": papers, "mode": "semantic"}
+    except Exception as e:
+        print(f"[Semantic Search] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Semantic search failed: {e}")
 
 @app.get("/api/kb/paper/{paper_id}")
 def get_paper_detail(paper_id: str):
@@ -554,6 +621,305 @@ def rename_history_endpoint(cid: str, data: Dict[str, str]):
     if isinstance(res, dict) and not res.get("ok"):
          raise HTTPException(500, f"Rename failed: {res.get('error')}")
     return {"status": "ok"}
+
+# ---------------------------
+# PDF Viewer API
+# ---------------------------
+@app.post("/api/open-pdf")
+def open_pdf(data: Dict[str, str]):
+    """Open PDF file in system default viewer"""
+    import subprocess
+    import os
+    
+    pdf_path = data.get("pdf_path", "")
+    if not pdf_path:
+        raise HTTPException(400, "pdf_path is required")
+    
+    # Resolve relative path from backend directory
+    if not os.path.isabs(pdf_path):
+        pdf_path = os.path.join(os.path.dirname(__file__), pdf_path)
+    
+    if not os.path.exists(pdf_path):
+        raise HTTPException(404, f"PDF not found: {pdf_path}")
+    
+    try:
+        # Windows
+        if sys.platform == "win32":
+            os.startfile(pdf_path)
+        # macOS
+        elif sys.platform == "darwin":
+            subprocess.run(["open", pdf_path], check=True)
+        # Linux
+        else:
+            subprocess.run(["xdg-open", pdf_path], check=True)
+        return {"status": "ok", "path": pdf_path}
+    except Exception as e:
+        raise HTTPException(500, f"Failed to open PDF: {e}")
+
+@app.post("/api/system/open_folder")
+def open_folder(path_data: dict):
+    """Open a folder in the system file explorer"""
+    path = path_data.get("path")
+    if not path or not os.path.exists(path):
+        raise HTTPException(404, "Path not found")
+    
+    try:
+        if os.name == 'nt': # Windows
+            os.startfile(path)
+        elif sys.platform == 'darwin': # macOS
+            subprocess.run(["open", path], check=True)
+        else: # Linux
+            subprocess.run(["xdg-open", path], check=True)
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(500, f"Failed to open folder: {e}")
+
+# ---------------------------
+# KB Import / Export API
+# ---------------------------
+
+def calculate_dir_size(path):
+    total_size = 0
+    for root, dirs, files in os.walk(path):
+        for f in files:
+            fp = os.path.join(root, f)
+            total_size += os.path.getsize(fp)
+    return total_size
+
+@app.get("/api/kb/export_local")
+async def export_kb_local():
+    """Export KB locally with SSE progress"""
+    
+    # Target directory: Desktop/MUJICA_Backups
+    desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+    backup_dir = os.path.join(desktop, "MUJICA_Backups")
+    os.makedirs(backup_dir, exist_ok=True)
+    
+    timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+    filename = f"mujica_kb_backup_{timestamp}.zip"
+    target_path = os.path.join(backup_dir, filename)
+    
+    kb_path = PROJECT_ROOT / "backend/data/lancedb"
+    if not kb_path.exists():
+        raise HTTPException(404, "KB not found")
+        
+    async def generate():
+        total_size = calculate_dir_size(kb_path)
+        processed_size = 0
+        
+        # Initial yield
+        yield json.dumps({"progress": 0, "status": "Starting..."}) + "\n"
+        
+        try:
+            with zipfile.ZipFile(target_path, "w", compression=zipfile.ZIP_STORED) as zf:
+                # 1. Metadata
+                sqlite_path = kb_path / "metadata.sqlite"
+                if sqlite_path.exists():
+                    zf.write(sqlite_path, arcname="metadata.sqlite")
+                    processed_size += sqlite_path.stat().st_size
+                    yield json.dumps({"progress": int(processed_size / total_size * 100), "status": "Archiving metadata..."}) + "\n"
+                
+                # 2. LanceDB
+                for db_name in ["papers.lance", "chunks.lance"]:
+                    db_path = kb_path / db_name
+                    if db_path.exists():
+                        for root, dirs, files in os.walk(db_path):
+                            for file in files:
+                                file_path = Path(root) / file
+                                rel_path = file_path.relative_to(kb_path)
+                                zf.write(file_path, arcname=str(rel_path))
+                                
+                                processed_size += file_path.stat().st_size
+                                # Yield every 1% or 10MB to avoid spamming
+                                # But for smooth bar, every file is okay if small
+                                yield json.dumps({
+                                    "progress": min(99, int(processed_size / total_size * 100)),
+                                    "status": f"Archiving {rel_path}"
+                                }) + "\n"
+            
+            # Done
+            yield json.dumps({"progress": 100, "status": "Done", "path": target_path, "dir": backup_dir}) + "\n"
+            
+        except Exception as e:
+            yield json.dumps({"error": str(e)}) + "\n"
+
+    return StreamingResponse(generate(), media_type="application/x-ndjson")
+@app.get("/api/kb/export")
+def export_kb(background_tasks: BackgroundTasks):
+    """Export Knowledge Base (SQLite + LanceDB) as ZIP"""
+    print(f"[KB Export] Request received, starting export process...")
+    print(f"[KB Export] Strategy: Disk-based buffer (NamedTemporaryFile) with ZIP_STORED")
+    
+    kb_path = PROJECT_ROOT / "backend/data/lancedb"
+    if not kb_path.exists():
+        raise HTTPException(404, "Knowledge base data not found")
+    
+    # Create a temp file on disk, NOT in memory
+    # delete=False because we need to re-open it for streaming
+    # We use a try-finally block for safety only if writing fails, but for streaming we need it to persist
+    
+    tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+    tmp_file.close() # Close immediately, we just wanted a name
+    temp_path = Path(tmp_file.name)
+        
+    try:
+        # Write to disk
+        print(f"[KB Export] Writing zip to temp file: {temp_path}")
+        with zipfile.ZipFile(temp_path, mode="w", compression=zipfile.ZIP_STORED) as zf:
+            # 1. Archive metadata.sqlite
+            sqlite_path = kb_path / "metadata.sqlite"
+            if sqlite_path.exists():
+                zf.write(sqlite_path, arcname="metadata.sqlite")
+            
+            # 2. Archive LanceDB tables
+            for db_name in ["papers.lance", "chunks.lance"]:
+                db_path = kb_path / db_name
+                if db_path.exists():
+                    for root, dirs, files in os.walk(db_path):
+                        for file in files:
+                            file_path = Path(root) / file
+                            rel_path = file_path.relative_to(kb_path)
+                            zf.write(file_path, arcname=str(rel_path))
+        
+        file_size = temp_path.stat().st_size
+        
+        timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"mujica_kb_backup_{timestamp}.zip"
+        
+        print(f"[KB Export] ZIP created on disk successfully")
+        print(f"[KB Export] File size: {file_size} bytes ({file_size / 1024 / 1024:.2f} MB)")
+        print(f"[KB Export] Sending stream...")
+
+        # Schedule cleanup
+        background_tasks.add_task(os.remove, temp_path)
+        
+        return StreamingResponse(
+            open(temp_path, "rb"),
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f"attachment; filename={filename}",
+                "Content-Length": str(file_size)
+            }
+        )
+
+    except Exception as e:
+        print(f"[KB Export] Error during export: {e}")
+        if temp_path.exists():
+            os.remove(temp_path)
+        raise HTTPException(500, f"Export failed: {e}")
+
+@app.post("/api/kb/import")
+async def import_kb(file: UploadFile = File(...)):
+    """Import and Merge Knowledge Base from ZIP"""
+    if not file.filename.endswith(".zip"):
+        raise HTTPException(400, "Only .zip files are supported")
+    
+    kb_path = PROJECT_ROOT / "backend/data/lancedb"
+    kb_path.mkdir(parents=True, exist_ok=True)
+    
+    # 1. Extract ZIP to temp
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        zip_path = tmp_path / "upload.zip"
+        
+        # Save upload
+        with open(zip_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+            
+        extract_dir = tmp_path / "extracted"
+        extract_dir.mkdir()
+        
+        try:
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                zf.extractall(extract_dir)
+        except zipfile.BadZipFile:
+             raise HTTPException(400, "Invalid zip file")
+             
+        # 2. Merge SQLite (metadata)
+        src_sqlite = extract_dir / "metadata.sqlite"
+        dst_sqlite = kb_path / "metadata.sqlite"
+        
+        if src_sqlite.exists():
+            if not dst_sqlite.exists():
+                shutil.copy2(src_sqlite, dst_sqlite)
+            else:
+                try:
+                    _merge_sqlite(str(src_sqlite), str(dst_sqlite))
+                except Exception as e:
+                    print(f"SQLite merge error: {e}")
+                    raise HTTPException(500, f"Failed to merge metadata: {e}")
+        
+        # 3. Merge LanceDB (vectors)
+        if lancedb:
+            for table_name in ["papers", "chunks"]:
+                # LanceDB lib uses folder names like 'papers.lance' usually, but 'open_table' takes name without extension if in managed dir.
+                # Here we operate on raw directories 'papers.lance' and 'chunks.lance'
+                src_tbl_dir = extract_dir / f"{table_name}.lance"
+                dst_tbl_dir = kb_path / f"{table_name}.lance"
+                
+                if src_tbl_dir.exists():
+                    if not dst_tbl_dir.exists():
+                        # Direct copy if not exists
+                        shutil.copytree(src_tbl_dir, dst_tbl_dir)
+                    else:
+                        # Append merge
+                        try:
+                            # Open source as a separate DB connection to extract data
+                            src_db = lancedb.connect(str(extract_dir))
+                            dst_db = lancedb.connect(str(kb_path))
+                            
+                            if table_name in src_db.table_names() and table_name in dst_db.table_names():
+                                src_tbl = src_db.open_table(table_name)
+                                dst_tbl = dst_db.open_table(table_name)
+                                # Append data
+                                # Note: This might duplicate vectors if they are identical. 
+                                # Ideally we should deduplicate by ID, but vector merge is complex.
+                                # For simplicity in "Import", we assume appending is desired or user knows what they do.
+                                # To avoid total duplicates, we can check IDs for 'papers'.
+                                # For 'chunks', it's massive.
+                                
+                                # Simple Append Strategy
+                                dst_tbl.add(src_tbl.to_arrow())
+                        except Exception as e:
+                            print(f"LanceDB merge error for {table_name}: {e}")
+                            # Non-critical? user might just want metadata. But vectors are important.
+                            # We'll allow partial failure but report log.
+                            pass
+        
+    return {"status": "ok", "message": "Import and merge completed"}
+
+def _merge_sqlite(src_path: str, dst_path: str):
+    """Helper to merge SQLite databases using INSERT OR IGNORE"""
+    conn_src = sqlite3.connect(src_path)
+    conn_dst = sqlite3.connect(dst_path)
+    
+    # Get all tables from source
+    cursor = conn_src.cursor()
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+    tables = [r[0] for r in cursor.fetchall()]
+    
+    for table in tables:
+        # Read all data
+        df = pd.read_sql_query(f"SELECT * FROM {table}", conn_src)
+        if not df.empty:
+            # Write to dest
+            # method='multi' is faster
+            # if_exists='append' with custom logic for IGNORE is hard in pandas.
+            # We use raw execute for INSERT OR IGNORE
+            
+            # Generate placeholders (?, ?, ...)
+            cols_count = len(df.columns)
+            placeholders = ",".join(["?"] * cols_count)
+            col_names = ",".join(df.columns)
+            
+            data = df.values.tolist()
+            # This SQL syntax works for SQLite to ignore duplicates on PRIMARY KEY
+            sql = f"INSERT OR IGNORE INTO {table} ({col_names}) VALUES ({placeholders})"
+            conn_dst.executemany(sql, data)
+            conn_dst.commit()
+    
+    conn_src.close()
+    conn_dst.close()
 
 if __name__ == "__main__":
     import uvicorn
