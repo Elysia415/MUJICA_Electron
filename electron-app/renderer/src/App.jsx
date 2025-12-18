@@ -192,7 +192,7 @@ function App() {
             className="flex items-center gap-3 p-3 rounded-lg w-full text-muted hover:bg-white/5 hover:text-text transition-all group"
           >
             <div className="transition-transform group-hover:scale-110">{theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}</div>
-            <span className="hidden md:block font-medium whitespace-nowrap">{theme === 'dark' ? '亮色模式' : '暗色模式'}</span>
+            <span className="hidden md:block font-medium whitespace-nowrap">{theme === 'dark' ? '简明' : 'MUJICA'}</span>
           </button>
           <NavBtn icon={<Settings />} label="设置" onClick={() => setShowSettings(true)} />
         </div>

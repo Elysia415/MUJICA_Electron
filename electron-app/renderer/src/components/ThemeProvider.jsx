@@ -26,21 +26,21 @@ export function ThemeProvider({ children }) {
         const root = document.documentElement;
 
         if (theme === 'light') {
-            // Light theme CSS variables (from Streamlit)
-            root.style.setProperty('--bg', '#ffffff');
+            // Light theme - 简明模式 (high contrast, clear readability)
+            root.style.setProperty('--bg', '#f8f9fa');
             root.style.setProperty('--bg-glow-1', 'transparent');
             root.style.setProperty('--bg-glow-2', 'transparent');
             root.style.setProperty('--panel', '#ffffff');
-            root.style.setProperty('--panel-2', '#fcfcfc');
-            root.style.setProperty('--text', '#202124');
-            root.style.setProperty('--muted', '#5f6368');
-            root.style.setProperty('--border', '#dadce0');
-            root.style.setProperty('--accent', '#bdbdbd');
-            root.style.setProperty('--accent-2', '#757575');
-            root.style.setProperty('--accent-hover', '#9e9e9e');
+            root.style.setProperty('--panel-2', '#f5f5f5');
+            root.style.setProperty('--text', '#1a1a1a');  // Darker text for better contrast
+            root.style.setProperty('--muted', '#4a4a4a'); // Darker muted for readability
+            root.style.setProperty('--border', '#d0d0d0');
+            root.style.setProperty('--accent', '#2563eb');  // Blue accent for clarity
+            root.style.setProperty('--accent-2', '#1d4ed8'); // Deeper blue
+            root.style.setProperty('--accent-hover', '#1e40af');
             root.style.setProperty('--input-bg', '#ffffff');
             root.style.setProperty('--code-bg', '#f1f3f4');
-            root.style.setProperty('--sidebar-bg', '#f8f9fa');
+            root.style.setProperty('--sidebar-bg', '#ffffff');
         } else {
             // Dark theme (Ave Mujica Gothic)
             root.style.setProperty('--bg', '#050505');

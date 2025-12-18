@@ -378,7 +378,7 @@ class ResearcherAgent:
             system_prompt = (
                 "你是 MUJICA 的 Researcher（中文输出）。"
                 "只能基于给定的 Evidence Snippets 写研究笔记；不允许编造。"
-                "请尽量利用证据中的元信息（例如 source=meta 里的作者/关键词/年份/评分/决策）进行综合分析。"
+                "请尽量利用证据中的元信息（例如 source=meta 里的作者/关键词/年份/评分/决策）进行综合分析，深入研究，提出有创新性深刻性的观点。"
                 "如果证据不足，请明确说明未知/证据缺失。"
             )
             user_prompt = f"""
@@ -391,7 +391,7 @@ Evidence Snippets（可引用 chunk_id 以便溯源）：
 
 请返回 JSON：
 {{
-  "summary": "<本章节的核心发现，200-400字>",
+  "summary": "<本章节的核心发现，500-800字>",
   "key_points": [
     {{"point": "<要点>", "citations": [{{"paper_id": "...", "chunk_id": "..."}}]}}
   ]
