@@ -118,13 +118,7 @@ MUJICA 采用多阶段 Agent 架构：
 3. 运行安装程序，按提示完成安装
 4. 启动应用，在设置中配置 API Key
 
-### 方式二：免安装运行
 
-1. 下载 `MUJICA_Portable.zip`
-2. 解压到任意目录
-3. 运行 `MUJICA.exe`
-
-> ⚠️ **注意**：免安装版必须保留完整的文件夹结构，严禁单独移动 `.exe` 文件。
 
 ### 初始配置
 
@@ -218,4 +212,4 @@ MUJICA_Electron/
 
 ## 📄 License
 
-MIT License © 2024 MUJICA Team
+MIT License © 2025 Elysia415
