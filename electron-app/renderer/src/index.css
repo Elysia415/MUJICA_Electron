@@ -5,22 +5,26 @@
 :root {
   /* Ave Mujica Theme (Dark/Gothic/Elegant) */
   --bg: #050505;
-  --bg-glow-1: rgba(139, 0, 50, 0.35); 
-  --bg-glow-2: rgba(75, 0, 130, 0.25); 
+  --bg-glow-1: rgba(139, 0, 50, 0.35);
+  --bg-glow-2: rgba(75, 0, 130, 0.25);
 
-  --panel: rgba(18, 18, 24, 0.90); /* Less transparent for readability */
-  --panel-2: rgba(26, 26, 32, 0.85);
+  --panel: rgba(18, 18, 24, 0.95);
+  /* More opaque for better readability */
+  --panel-2: rgba(30, 30, 38, 0.90);
 
-  --text: #eaeaea;
-  --muted: #999999;
+  --text: #f0f0f0;
+  --muted: #b8b8b8;
+  /* Increased from #999 for better readability */
 
-  --border: rgba(197, 160, 89, 0.6); 
-  
-  --accent: #8a002b;      /* Deep Crimson */
-  --accent-2: #c5a059;    /* Antique Gold */
-  
+  --border: rgba(197, 160, 89, 0.6);
+
+  --accent: #8a002b;
+  /* Deep Crimson */
+  --accent-2: #d4b06a;
+  /* Slightly brighter Antique Gold */
+
   --accent-hover: #a30033;
-  --accent-2-hover: #d4af37;
+  --accent-2-hover: #e4c077;
 }
 
 body {
@@ -28,7 +32,8 @@ body {
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   background-color: var(--bg);
   color: var(--text);
-  overflow: hidden; /* App-like feel */
+  overflow: hidden;
+  /* App-like feel */
 }
 
 /* Custom Scrollbar */
@@ -36,14 +41,17 @@ body {
   width: 8px;
   height: 8px;
 }
+
 ::-webkit-scrollbar-track {
   background: var(--bg);
 }
+
 ::-webkit-scrollbar-thumb {
   background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: 4px;
 }
+
 ::-webkit-scrollbar-thumb:hover {
   background: var(--accent);
 }
