@@ -37,7 +37,7 @@ class ConferenceDataFetcher:
                     username=username,
                     password=password
                 )
-                print("✓ OpenReview client initialized")
+                print("[OK] OpenReview client initialized")
             except Exception as e:
                 print(f"Warning: Failed to initialize OpenReview client: {e}")
                 print("Continuing without authentication (limited access)")
@@ -170,9 +170,9 @@ class ConferenceDataFetcher:
                     break
 
             if accepted_only:
-                print(f"✓ Successfully fetched {len(papers)} accepted papers (scanned {seen} submissions)")
+                print(f"[OK] Successfully fetched {len(papers)} accepted papers (scanned {seen} submissions)")
             else:
-                print(f"✓ Successfully fetched {len(papers)} papers")
+                print(f"[OK] Successfully fetched {len(papers)} papers")
 
         except Exception as e:
             print(f"Error fetching papers: {e}")
@@ -584,7 +584,7 @@ class ConferenceDataFetcher:
             for note in notes:
                 note_title = note.content.get('title', {}).get('value', '').lower()
                 if title_lower in note_title or note_title in title_lower:
-                    print(f"  ✓ Found matching paper")
+                    print(f"  [OK] Found matching paper")
                     return self._extract_paper_info(note, ['title', 'abstract', 'authors', 'pdf'], venue_id="Unknown")
             
             # 如果没有完全匹配，返回第一个结果
@@ -832,7 +832,7 @@ class ConferenceDataFetcher:
 
         succeeded = exists + downloaded
         print(
-            f"\n✓ Download complete: {succeeded} ok (downloaded={downloaded}, exists={exists}), "
+            f"\n[OK] Download complete: {succeeded} ok (downloaded={downloaded}, exists={exists}), "
             f"{failed} failed, {skipped} skipped"
             f" (workers={max_workers}, delay={delay}s, retries={retries}, timeout={timeout}s, "
             f"force_redownload={force_redownload}, validate_existing={validate_existing}, min_bytes={min_bytes})"
@@ -889,7 +889,7 @@ class ConferenceDataFetcher:
                     else:
                         stats["pending"] += 1
             
-            print(f"✓ Stats: {stats['total_submissions']} total, "
+            print(f"[OK] Stats: {stats['total_submissions']} total, "
                   f"{stats['accepted']} accepted, "
                   f"{stats['rejected']} rejected, "
                   f"{stats['pending']} pending")

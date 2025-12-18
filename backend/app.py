@@ -25,10 +25,43 @@ except ImportError:
 # ---------------------------
 # Path Setup
 # ---------------------------
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-SOURCE_ROOT = PROJECT_ROOT / "source"
+# Detect if running in PyInstaller bundle
+IS_PACKAGED = getattr(sys, 'frozen', False)
+
+def _get_source_root():
+    """Get the source root path, handling PyInstaller bundling."""
+    if IS_PACKAGED and hasattr(sys, '_MEIPASS'):
+        # Running in PyInstaller bundle - src is directly under _MEIPASS
+        return Path(sys._MEIPASS)
+    else:
+        # Running in normal Python environment - source is under project root
+        return Path(__file__).resolve().parent.parent / "source"
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent  # Always points to MUJICA_Electron in dev
+SOURCE_ROOT = _get_source_root()
+
 if str(SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(SOURCE_ROOT))
+
+# Also add the parent of src for module resolution (for `from src.utils import ...`)
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+# User config directory (for .env persistence in packaged app)
+# Use %APPDATA%/MUJICA on Windows, ~/.mujica on Unix
+if os.name == 'nt':
+    USER_CONFIG_DIR = Path(os.environ.get('APPDATA', os.path.expanduser('~'))) / 'MUJICA'
+else:
+    USER_CONFIG_DIR = Path.home() / '.mujica'
+USER_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+USER_ENV_PATH = USER_CONFIG_DIR / '.env'
+
+# Data directory - use user directory in packaged mode, project directory in dev mode
+if IS_PACKAGED:
+    DATA_DIR = USER_CONFIG_DIR / 'data'
+else:
+    DATA_DIR = Path(__file__).resolve().parent.parent / 'data'
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # ---------------------------
 # Imports from Source
@@ -37,7 +70,17 @@ try:
     from src.utils.env import load_env
     load_env()  # Load environment variables
 except ImportError as e:
-    print(f"Error importing from source: {e}")
+    print(f"Warning: Could not import from source: {e}")
+    print(f"PROJECT_ROOT: {PROJECT_ROOT}")
+    print(f"SOURCE_ROOT: {SOURCE_ROOT}")
+    print(f"sys.path: {sys.path[:5]}...")
+    # Try to load dotenv directly as fallback
+    try:
+        from dotenv import load_dotenv
+        if USER_ENV_PATH.exists():
+            load_dotenv(USER_ENV_PATH)
+    except:
+        pass
 
 try:
     from backend.job_manager import (
@@ -131,13 +174,17 @@ except ImportError:
 # Helpers
 # ---------------------------
 def _update_env_file(updates: Dict[str, str]):
-    """Update .env file preserving comments and structure."""
-    env_path = PROJECT_ROOT / ".env"
+    """Update .env file in user config directory (not installation dir)."""
+    env_path = USER_ENV_PATH  # Use user directory instead of PROJECT_ROOT
+    
     if not env_path.exists():
         # Create new if not exists
         with open(env_path, "w", encoding="utf-8") as f:
             for k, v in updates.items():
                 f.write(f"{k}={v}\n")
+        # Also update current process env
+        for k, v in updates.items():
+            os.environ[k] = str(v)
         return
 
     # Read existing lines
@@ -173,6 +220,10 @@ def _update_env_file(updates: Dict[str, str]):
             
     with open(env_path, "w", encoding="utf-8") as f:
         f.writelines(new_lines)
+    
+    # Also update current process env
+    for k, v in updates.items():
+        os.environ[k] = str(v)
 
 # ---------------------------
 # Global Services
@@ -185,7 +236,9 @@ def get_kb(force_refresh: bool = False) -> KnowledgeBase:
     """Get KB instance, optionally forcing a fresh connection for updated data."""
     global _kb_instance
     if _kb_instance is None or force_refresh:
-        _kb_instance = KnowledgeBase()
+        # Use absolute path for data directory
+        kb_path = str(DATA_DIR / "lancedb")
+        _kb_instance = KnowledgeBase(db_path=kb_path)
         _kb_instance.initialize_db()
     return _kb_instance
 
@@ -699,7 +752,7 @@ async def export_kb_local():
     filename = f"mujica_kb_backup_{timestamp}.zip"
     target_path = os.path.join(backup_dir, filename)
     
-    kb_path = PROJECT_ROOT / "backend/data/lancedb"
+    kb_path = DATA_DIR / "lancedb"
     if not kb_path.exists():
         raise HTTPException(404, "KB not found")
         
@@ -750,7 +803,7 @@ def export_kb(background_tasks: BackgroundTasks):
     print(f"[KB Export] Request received, starting export process...")
     print(f"[KB Export] Strategy: Disk-based buffer (NamedTemporaryFile) with ZIP_STORED")
     
-    kb_path = PROJECT_ROOT / "backend/data/lancedb"
+    kb_path = DATA_DIR / "lancedb"
     if not kb_path.exists():
         raise HTTPException(404, "Knowledge base data not found")
     
@@ -814,7 +867,7 @@ async def import_kb(file: UploadFile = File(...)):
     if not file.filename.endswith(".zip"):
         raise HTTPException(400, "Only .zip files are supported")
     
-    kb_path = PROJECT_ROOT / "backend/data/lancedb"
+    kb_path = DATA_DIR / "lancedb"
     kb_path.mkdir(parents=True, exist_ok=True)
     
     # 1. Extract ZIP to temp

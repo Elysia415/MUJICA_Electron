@@ -2,9 +2,26 @@ import threading
 import time
 import traceback
 import uuid
+import os
+import sys
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 from fastapi.encoders import jsonable_encoder
+
+# Setup sys.path before importing from src
+# This ensures the module can be imported both in dev mode and packaged mode
+IS_PACKAGED = getattr(sys, 'frozen', False)
+
+def _get_source_root() -> Path:
+    if IS_PACKAGED and hasattr(sys, '_MEIPASS'):
+        return Path(sys._MEIPASS)
+    else:
+        return Path(__file__).resolve().parent.parent / "source"
+
+_source_root = _get_source_root()
+if str(_source_root) not in sys.path:
+    sys.path.insert(0, str(_source_root))
 
 from src.utils.llm import get_llm_client
 from src.data_engine.storage import KnowledgeBase
@@ -17,6 +34,22 @@ from src.writer.agent import WriterAgent
 from src.verifier.agent import VerifierAgent
 from src.utils.cancel import MujicaCancelled
 from src.utils.chat_history import save_conversation
+
+# Compute DATA_DIR the same way as app.py
+def _get_data_dir() -> Path:
+    if getattr(sys, 'frozen', False):
+        # Packaged mode - use user directory
+        if os.name == 'nt':
+            user_config = Path(os.environ.get('APPDATA', os.path.expanduser('~'))) / 'MUJICA'
+        else:
+            user_config = Path.home() / '.mujica'
+        return user_config / 'data'
+    else:
+        # Dev mode - use project directory
+        return Path(__file__).resolve().parent.parent / 'data'
+
+DATA_DIR = _get_data_dir()
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # ---------------------------
 # Job Classes
@@ -174,6 +207,7 @@ def run_research_job(
         _job_update(job, status="running", stage="init", message="Initializing Research Agents...")
 
         kb = KnowledgeBase(
+            db_path=str(DATA_DIR / "lancedb"),
             embedding_model=embedding_model,
             embedding_api_key=embedding_api_key,
             embedding_base_url=embedding_base_url,
@@ -280,12 +314,13 @@ def run_ingest_job(
         _job_update(job, status="running", stage="ingest", message="Ingesting Data...")
         
         kb = KnowledgeBase(
+            db_path=str(DATA_DIR / "lancedb"),
             embedding_model=embedding_model,
             embedding_api_key=embedding_api_key,
             embedding_base_url=embedding_base_url,
         )
         kb.initialize_db()
-        ingestor = OpenReviewIngestor(kb, fetcher=ConferenceDataFetcher(output_dir="data/raw"))
+        ingestor = OpenReviewIngestor(kb, fetcher=ConferenceDataFetcher(output_dir=str(DATA_DIR / "raw")))
 
         def _on_progress(payload: Dict[str, Any]) -> None:
             if job.cancel_event.is_set():

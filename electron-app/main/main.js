@@ -16,6 +16,7 @@ const PROJECT_ROOT = isPackaged
 
 function startBackend() {
   console.log('Starting Python Backend...');
+  const fs = require('fs');
 
   let executable;
   let args = [];
@@ -28,6 +29,14 @@ function startBackend() {
     const backendDist = path.join(resourcesPath, 'backend', 'mujica_backend');
     executable = path.join(backendDist, 'mujica_backend.exe');
     cwd = backendDist;
+
+    // Check if backend exe exists
+    if (!fs.existsSync(executable)) {
+      console.error(`[Backend] ERROR: Backend executable not found at: ${executable}`);
+      console.error('[Backend] Please reinstall the application.');
+      return;
+    }
+    console.log(`[Backend] Found backend at: ${executable}`);
   } else {
     // Dev mode - use shell on Windows to find Python in PATH
     executable = process.platform === 'win32' ? 'python' : 'python3';
@@ -39,22 +48,30 @@ function startBackend() {
   console.log(`[Backend] Spawning: ${executable} ${args.join(' ')}`);
   console.log(`[Backend] CWD: ${cwd}`);
   console.log(`[Backend] Shell mode: ${useShell}`);
+  console.log(`[Backend] Is Packaged: ${isPackaged}`);
 
-  backendProcess = spawn(executable, args, {
-    cwd: cwd,
-    stdio: 'inherit',
-    shell: useShell, // Use shell on Windows to resolve Python from PATH
-    windowsHide: true // Hide the Python console window on Windows
-  });
+  try {
+    backendProcess = spawn(executable, args, {
+      cwd: cwd,
+      stdio: isPackaged ? 'ignore' : 'inherit', // Hide output in packaged mode
+      shell: useShell,
+      windowsHide: isPackaged, // Only hide window in packaged mode
+      detached: false
+    });
 
-  backendProcess.on('error', (err) => {
-    console.error('[Backend] Failed to start:', err.message);
-    console.error('[Backend] Make sure Python is installed and in your PATH.');
-  });
+    backendProcess.on('error', (err) => {
+      console.error('[Backend] Failed to start:', err.message);
+      console.error('[Backend] Full error:', err);
+    });
 
-  backendProcess.on('exit', (code, signal) => {
-    console.log(`[Backend] Process exited with code ${code}, signal ${signal}`);
-  });
+    backendProcess.on('exit', (code, signal) => {
+      console.log(`[Backend] Process exited with code ${code}, signal ${signal}`);
+    });
+
+    console.log(`[Backend] Started with PID: ${backendProcess.pid}`);
+  } catch (err) {
+    console.error('[Backend] Exception while starting:', err);
+  }
 }
 
 function createWindow() {

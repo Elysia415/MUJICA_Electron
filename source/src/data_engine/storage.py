@@ -697,7 +697,7 @@ class KnowledgeBase:
 
         # 4) 刷新 metadata_df
         self.metadata_df = self._load_metadata_df()
-        print(f"✓ Ingested {len(papers)} papers (metadata) into SQLite and vectors into LanceDB.")
+        print(f"[OK] Ingested {len(papers)} papers (metadata) into SQLite and vectors into LanceDB.")
 
     def get_paper_ids_with_content(self) -> set[str]:
         """

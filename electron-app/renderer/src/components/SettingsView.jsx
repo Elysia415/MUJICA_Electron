@@ -8,6 +8,7 @@ export function SettingsView({ onClose }) {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [showKey, setShowKey] = useState({});
+    const [saveStatus, setSaveStatus] = useState(null); // { type: 'success' | 'error', message: string }
 
     useEffect(() => {
         loadConfig();
@@ -27,6 +28,7 @@ export function SettingsView({ onClose }) {
     const handleSave = async (e) => {
         e.preventDefault();
         setSaving(true);
+        setSaveStatus(null);
 
         // Filter out _SET keys which are just indicators
         const toSave = {};
@@ -39,9 +41,10 @@ export function SettingsView({ onClose }) {
         try {
             await api.updateConfig(toSave);
             await loadConfig(); // Reload to get mask states
-            alert('设置已保存！');
+            setSaveStatus({ type: 'success', message: '设置已保存！' });
+            setTimeout(() => setSaveStatus(null), 3000);
         } catch (e) {
-            alert('保存失败: ' + e.message);
+            setSaveStatus({ type: 'error', message: '保存失败: ' + e.message });
         } finally {
             setSaving(false);
         }
@@ -178,14 +181,21 @@ export function SettingsView({ onClose }) {
 
                 </div>
 
-                <div className="p-6 border-t border-border bg-panel-2 rounded-b-xl flex justify-end gap-3">
-                    <button onClick={onClose} className="px-6 py-2 rounded-lg text-muted hover:text-text">取消</button>
-                    <button
-                        onClick={handleSave} disabled={saving}
-                        className="flex items-center gap-2 px-6 py-2 bg-accent text-white rounded-lg hover:bg-accent-hover disabled:opacity-50 font-medium"
-                    >
-                        <Save size={18} /> {saving ? '保存中...' : '保存设置'}
-                    </button>
+                <div className="p-6 border-t border-border bg-panel-2 rounded-b-xl flex justify-between items-center gap-3">
+                    {saveStatus ? (
+                        <div className={`text-sm px-4 py-2 rounded-lg ${saveStatus.type === 'success' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                            {saveStatus.message}
+                        </div>
+                    ) : <div />}
+                    <div className="flex gap-3">
+                        <button onClick={onClose} className="px-6 py-2 rounded-lg text-muted hover:text-text">取消</button>
+                        <button
+                            onClick={handleSave} disabled={saving}
+                            className="flex items-center gap-2 px-6 py-2 bg-accent text-white rounded-lg hover:bg-accent-hover disabled:opacity-50 font-medium"
+                        >
+                            <Save size={18} /> {saving ? '保存中...' : '保存设置'}
+                        </button>
+                    </div>
                 </div>
             </motion.div>
         </div>

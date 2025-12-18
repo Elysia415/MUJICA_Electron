@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -17,8 +19,22 @@ def new_conversation_id() -> str:
     return f"{t}-{uuid.uuid4().hex[:8]}"
 
 
+def _get_data_dir() -> Path:
+    """Get data directory, handling PyInstaller bundling."""
+    if getattr(sys, 'frozen', False):
+        # Packaged mode - use user directory
+        if os.name == 'nt':
+            user_config = Path(os.environ.get('APPDATA', os.path.expanduser('~'))) / 'MUJICA'
+        else:
+            user_config = Path.home() / '.mujica'
+        return user_config / 'data'
+    else:
+        # Dev mode - use relative path
+        return Path("data")
+
+
 def _history_dir() -> Path:
-    d = Path("data") / "ui_history"
+    d = _get_data_dir() / "ui_history"
     d.mkdir(parents=True, exist_ok=True)
     return d
 

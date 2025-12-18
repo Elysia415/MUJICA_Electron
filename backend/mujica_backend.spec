@@ -34,14 +34,13 @@ else:
 
 SRC_DIR = os.path.join(SOURCE_DIR, 'src')
 PROJECT_ROOT = os.path.dirname(SOURCE_DIR)
-ENV_FILE = os.path.join(PROJECT_ROOT, '.env')
+# NOTE: Do NOT bundle .env file - user config should be in %APPDATA%/MUJICA/.env
 
 # Prepare datas list
 _datas = [
     (SRC_DIR, 'src'),
 ]
-if os.path.exists(ENV_FILE):
-    _datas.append((ENV_FILE, '.'))
+# Removed: .env file bundling - this would expose dev credentials
 
 a = Analysis(
     ['app.py'],
