@@ -70,6 +70,8 @@ a = Analysis(
         'numpy',
         'zipfile',
         'shutil',
+        # CRITICAL: dotenv for loading .env file
+        'dotenv',
     ] + collect_submodules('lancedb'),
     hookspath=[],
     hooksconfig={},
