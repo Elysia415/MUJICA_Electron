@@ -939,10 +939,31 @@ async def import_kb(file: UploadFile = File(...)):
                                 if table_name in src_db.table_names() and table_name in dst_db.table_names():
                                     src_tbl = src_db.open_table(table_name)
                                     dst_tbl = dst_db.open_table(table_name)
-                                    src_data = src_tbl.to_pandas().to_dict('records')
-                                    if src_data:
-                                        print(f"[Import] Adding {len(src_data)} records to {table_name}")
-                                        dst_tbl.add(src_data)
+                                    
+                                    # Get total count for progress
+                                    total_rows = src_tbl.count_rows()
+                                    print(f"[Import] Source has {total_rows} rows in {table_name}")
+                                    
+                                    # Batch process to avoid memory issues
+                                    batch_size = 10000
+                                    offset = 0
+                                    total_added = 0
+                                    
+                                    while offset < total_rows:
+                                        # Use LanceDB's search with limit/offset for batching
+                                        batch_df = src_tbl.to_pandas()[offset:offset + batch_size]
+                                        if batch_df.empty:
+                                            break
+                                        
+                                        batch_data = batch_df.to_dict('records')
+                                        if batch_data:
+                                            dst_tbl.add(batch_data)
+                                            total_added += len(batch_data)
+                                            print(f"[Import] Added {total_added}/{total_rows} records to {table_name}")
+                                        
+                                        offset += batch_size
+                                    
+                                    print(f"[Import] Completed merging {total_added} records into {table_name}")
                         except Exception as e:
                             print(f"[Import] LanceDB error for {table_name} (non-fatal): {e}")
                             traceback.print_exc()
