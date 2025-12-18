@@ -37,7 +37,16 @@ def _get_source_root():
         # Running in normal Python environment - source is under project root
         return Path(__file__).resolve().parent.parent / "source"
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent  # Always points to MUJICA_Electron in dev
+def _get_project_root():
+    """Get the project root path, handling PyInstaller bundling."""
+    if IS_PACKAGED:
+        # Running in PyInstaller bundle - use exe directory
+        return Path(sys.executable).resolve().parent
+    else:
+        # Running in normal Python environment
+        return Path(__file__).resolve().parent.parent
+
+PROJECT_ROOT = _get_project_root()
 SOURCE_ROOT = _get_source_root()
 
 if str(SOURCE_ROOT) not in sys.path:
@@ -77,10 +86,18 @@ except ImportError as e:
     # Try to load dotenv directly as fallback
     try:
         from dotenv import load_dotenv
-        if USER_ENV_PATH.exists():
-            load_dotenv(USER_ENV_PATH)
-    except:
-        pass
+        # Try multiple .env locations
+        env_loaded = False
+        for env_path in [USER_ENV_PATH, PROJECT_ROOT / '.env']:
+            if env_path.exists():
+                print(f"[ENV] Loading .env from: {env_path}")
+                load_dotenv(env_path)
+                env_loaded = True
+                break
+        if not env_loaded:
+            print(f"[ENV] Warning: No .env file found at {USER_ENV_PATH} or {PROJECT_ROOT / '.env'}")
+    except Exception as env_err:
+        print(f"[ENV] Error loading dotenv: {env_err}")
 
 try:
     from backend.job_manager import (
