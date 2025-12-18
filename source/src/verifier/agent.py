@@ -352,14 +352,57 @@ Evidence:
                 comment_lines.append(f"   - **原因**: {ev['reason']}")
                 comment_lines.append("")
         
-        # 总评
+        # 总评 - 使用 AI 生成更详细的评价
         comment_lines.append("---")
-        if overall >= 0.8 and contradicts == 0:
-            comment_lines.append("**总评**: ✅ 引用一致性优秀，报告内容可信度高")
-        elif contradicts > 0:
-            comment_lines.append("**总评**: ❌ 存在幻觉风险，建议复核上述冲突论点")
-        else:
-            comment_lines.append("**总评**: ⚠️ 部分论点证据不足，建议补充引用来源")
+        
+        # 构建评估摘要供 AI 分析
+        ai_summary_prompt = f"""你是学术报告质量评审专家。请根据以下验证结果，生成一段简洁但有洞察力的总评（3-5句话）。
+
+验证统计：
+- 检验论点数：{len(evaluations)}
+- 证据支持：{supports} 条
+- 证据存疑：{len(evaluations) - supports - contradicts} 条  
+- 证据冲突：{contradicts} 条
+- 综合评分：{final_score}/10
+
+{'冲突论点示例：' + chr(10).join([f'- "{c["claim"]}" (原因: {c["reason"]})' for c in contradicted_claims[:3]]) if contradicted_claims else '无冲突论点。'}
+
+{'存疑论点示例：' + chr(10).join([f'- "{c["claim"]}"' for c in unknown_claims[:3]]) if unknown_claims else ''}
+
+请输出：
+1. 一句话总体评价（用 ✅/⚠️/❌ 开头表示质量等级）
+2. 主要优点（如有）
+3. 需要改进的地方（如有）
+4. 给作者的具体建议
+
+要求：
+- 使用中文
+- 语气专业但友好
+- 直接输出内容，不要有"好的"等开场白
+- 总字数控制在 150-250 字
+"""
+        
+        try:
+            check_cancel(cancel_event, stage="verify_generate_summary")
+            summary_resp = self.llm.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "你是学术写作质量顾问，擅长给出建设性反馈。"},
+                    {"role": "user", "content": ai_summary_prompt}
+                ],
+                max_tokens=500,
+            )
+            ai_summary = summary_resp.choices[0].message.content.strip()
+            comment_lines.append(f"**AI 总评**\n\n{ai_summary}")
+        except Exception as e:
+            print(f"[VerifierAgent] AI summary failed: {e}")
+            # Fallback to static summary
+            if overall >= 0.8 and contradicts == 0:
+                comment_lines.append("**总评**: ✅ 引用一致性优秀，报告内容可信度高")
+            elif contradicts > 0:
+                comment_lines.append("**总评**: ❌ 存在幻觉风险，建议复核上述冲突论点")
+            else:
+                comment_lines.append("**总评**: ⚠️ 部分论点证据不足，建议补充引用来源")
         
         # Debug: confirm new code is running
         print(f"[VerifierAgent] score={final_score}/10, comment_len={len(''.join(comment_lines))}")
