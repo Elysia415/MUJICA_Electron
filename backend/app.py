@@ -65,6 +65,16 @@ else:
 USER_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 USER_ENV_PATH = USER_CONFIG_DIR / '.env'
 
+# Simple startup logger
+LOG_FILE = USER_CONFIG_DIR / "backend_startup.log"
+def log_startup(msg):
+    print(msg)
+    try:
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(f"[{datetime.datetime.now()}] {msg}\n")
+    except:
+        pass
+
 # Data directory - use user directory in packaged mode, project directory in dev mode
 if IS_PACKAGED:
     DATA_DIR = USER_CONFIG_DIR / 'data'
@@ -75,42 +85,43 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 # ---------------------------
 # Imports from Source
 # ---------------------------
-print(f"[STARTUP] IS_PACKAGED: {IS_PACKAGED}")
-print(f"[STARTUP] USER_ENV_PATH: {USER_ENV_PATH}")
-print(f"[STARTUP] USER_ENV_PATH exists: {USER_ENV_PATH.exists()}")
-print(f"[STARTUP] PROJECT_ROOT: {PROJECT_ROOT}")
+log_startup("===========================================")
+log_startup(f"[STARTUP] IS_PACKAGED: {IS_PACKAGED}")
+log_startup(f"[STARTUP] USER_ENV_PATH: {USER_ENV_PATH}")
+log_startup(f"[STARTUP] USER_ENV_PATH exists: {USER_ENV_PATH.exists()}")
+log_startup(f"[STARTUP] PROJECT_ROOT: {PROJECT_ROOT}")
 
 try:
     from src.utils.env import load_env
-    print("[STARTUP] load_env imported successfully, calling load_env()...")
+    log_startup("[STARTUP] load_env imported successfully, calling load_env()...")
     load_env()  # Load environment variables
-    print("[STARTUP] load_env() completed")
+    log_startup("[STARTUP] load_env() completed")
 except ImportError as e:
-    print(f"[STARTUP] Could not import load_env: {e}")
-    print(f"[STARTUP] SOURCE_ROOT: {SOURCE_ROOT}")
-    print(f"[STARTUP] sys.path: {sys.path[:5]}...")
+    log_startup(f"[STARTUP] Could not import load_env: {e}")
+    log_startup(f"[STARTUP] SOURCE_ROOT: {SOURCE_ROOT}")
+    log_startup(f"[STARTUP] sys.path: {sys.path[:5]}...")
     # Try to load dotenv directly as fallback
     try:
         from dotenv import load_dotenv
-        print("[STARTUP] Using dotenv fallback")
+        log_startup("[STARTUP] Using dotenv fallback")
         # Try multiple .env locations
         env_loaded = False
         for env_path in [USER_ENV_PATH, PROJECT_ROOT / '.env']:
             if env_path.exists():
-                print(f"[STARTUP] Loading .env from: {env_path}")
+                log_startup(f"[STARTUP] Loading .env from: {env_path}")
                 load_dotenv(env_path)
                 env_loaded = True
                 break
         if not env_loaded:
-            print(f"[STARTUP] Warning: No .env file found")
+            log_startup(f"[STARTUP] Warning: No .env file found")
     except Exception as env_err:
-        print(f"[STARTUP] Error loading dotenv: {env_err}")
+        log_startup(f"[STARTUP] Error loading dotenv: {env_err}")
 
 # Print loaded config immediately after loading
-print(f"[STARTUP] After env load:")
-print(f"  MUJICA_DEFAULT_MODEL = '{os.getenv('MUJICA_DEFAULT_MODEL', '<NOT SET>')}'")
-print(f"  OPENAI_BASE_URL = '{os.getenv('OPENAI_BASE_URL', '<NOT SET>')}'")
-print(f"  OPENAI_API_KEY = {'***SET***' if os.getenv('OPENAI_API_KEY') else '<NOT SET>'}")
+log_startup(f"[STARTUP] After env load:")
+log_startup(f"  MUJICA_DEFAULT_MODEL = '{os.getenv('MUJICA_DEFAULT_MODEL', '<NOT SET>')}'")
+log_startup(f"  OPENAI_BASE_URL = '{os.getenv('OPENAI_BASE_URL', '<NOT SET>')}'")
+log_startup(f"  OPENAI_API_KEY = {'***SET***' if os.getenv('OPENAI_API_KEY') else '<NOT SET>'}")
 
 try:
     from backend.job_manager import (
