@@ -75,29 +75,42 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 # ---------------------------
 # Imports from Source
 # ---------------------------
+print(f"[STARTUP] IS_PACKAGED: {IS_PACKAGED}")
+print(f"[STARTUP] USER_ENV_PATH: {USER_ENV_PATH}")
+print(f"[STARTUP] USER_ENV_PATH exists: {USER_ENV_PATH.exists()}")
+print(f"[STARTUP] PROJECT_ROOT: {PROJECT_ROOT}")
+
 try:
     from src.utils.env import load_env
+    print("[STARTUP] load_env imported successfully, calling load_env()...")
     load_env()  # Load environment variables
+    print("[STARTUP] load_env() completed")
 except ImportError as e:
-    print(f"Warning: Could not import from source: {e}")
-    print(f"PROJECT_ROOT: {PROJECT_ROOT}")
-    print(f"SOURCE_ROOT: {SOURCE_ROOT}")
-    print(f"sys.path: {sys.path[:5]}...")
+    print(f"[STARTUP] Could not import load_env: {e}")
+    print(f"[STARTUP] SOURCE_ROOT: {SOURCE_ROOT}")
+    print(f"[STARTUP] sys.path: {sys.path[:5]}...")
     # Try to load dotenv directly as fallback
     try:
         from dotenv import load_dotenv
+        print("[STARTUP] Using dotenv fallback")
         # Try multiple .env locations
         env_loaded = False
         for env_path in [USER_ENV_PATH, PROJECT_ROOT / '.env']:
             if env_path.exists():
-                print(f"[ENV] Loading .env from: {env_path}")
+                print(f"[STARTUP] Loading .env from: {env_path}")
                 load_dotenv(env_path)
                 env_loaded = True
                 break
         if not env_loaded:
-            print(f"[ENV] Warning: No .env file found at {USER_ENV_PATH} or {PROJECT_ROOT / '.env'}")
+            print(f"[STARTUP] Warning: No .env file found")
     except Exception as env_err:
-        print(f"[ENV] Error loading dotenv: {env_err}")
+        print(f"[STARTUP] Error loading dotenv: {env_err}")
+
+# Print loaded config immediately after loading
+print(f"[STARTUP] After env load:")
+print(f"  MUJICA_DEFAULT_MODEL = '{os.getenv('MUJICA_DEFAULT_MODEL', '<NOT SET>')}'")
+print(f"  OPENAI_BASE_URL = '{os.getenv('OPENAI_BASE_URL', '<NOT SET>')}'")
+print(f"  OPENAI_API_KEY = {'***SET***' if os.getenv('OPENAI_API_KEY') else '<NOT SET>'}")
 
 try:
     from backend.job_manager import (
