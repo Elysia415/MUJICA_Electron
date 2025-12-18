@@ -27,19 +27,29 @@ function App() {
 
   // Configuration
   const [config, setConfig] = useState({
-    model_name: 'gpt-4o',
+    model_name: '', // Removed hardcoded default
     api_key: '',
-    base_url: 'https://api.openai.com/v1',
+    base_url: '',
   });
 
   const pollInterval = useRef(null);
 
   // Initial Config Load
-  useEffect(() => {
+  const loadAppConfig = () => {
     api.getConfig().then(res => {
-      // Only override if not set by user (simple logic)
+      console.log("[App] Config loaded:", res.data);
       setConfig(prev => ({ ...prev, ...res.data }));
-    }).catch(console.error);
+    }).catch(err => {
+      console.error("[App] Failed to load config:", err);
+      // Retry once after 2s if failed (backoff)
+      setTimeout(() => {
+        api.getConfig().then(res => setConfig(prev => ({ ...prev, ...res.data }))).catch(console.error);
+      }, 2000);
+    });
+  };
+
+  useEffect(() => {
+    loadAppConfig();
   }, []);
 
   // Polling Logic
@@ -67,7 +77,7 @@ function App() {
     try {
       setJobState(null);
       const res = await api.startPlan(query, {
-        model_name: config.MUJICA_DEFAULT_MODEL || 'gpt-4o',
+        model_name: config.MUJICA_DEFAULT_MODEL || 'deepseek-chat', // Default to deepseek-chat if config missing
         api_key: config.OPENAI_API_KEY,
         base_url: config.OPENAI_BASE_URL
       });
@@ -414,7 +424,10 @@ function App() {
         </div>
       </div>
 
-      {showSettings && <SettingsView onClose={() => setShowSettings(false)} />}
+      {showSettings && <SettingsView onClose={() => {
+        setShowSettings(false);
+        loadAppConfig(); // Refetch config when settings closed
+      }} />}
     </div>
   );
 }
