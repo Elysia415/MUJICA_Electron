@@ -869,7 +869,7 @@ def export_kb(background_tasks: BackgroundTasks):
         raise HTTPException(500, f"Export failed: {e}")
 
 @app.post("/api/kb/import")
-async def import_kb(file: UploadFile = File(...)):
+def import_kb(file: UploadFile = File(...)):
     """Import and Merge Knowledge Base from ZIP"""
     import traceback
     
