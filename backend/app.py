@@ -161,17 +161,19 @@ app.add_middleware(
 
 class PlanRequest(BaseModel):
     query: str
-    model_name: str = "gpt-4o"
+    # These are optional overrides - backend will use env vars if not provided
+    model_name: Optional[str] = None
     api_key: Optional[str] = None
     base_url: Optional[str] = None
     stats: Dict[str, Any] = {}
 
 class ResearchRequest(BaseModel):
     plan: Dict[str, Any]
-    model_name: str = "gpt-4o"
+    # These are optional overrides - backend will use env vars if not provided
+    model_name: Optional[str] = None
     chat_api_key: Optional[str] = None
     chat_base_url: Optional[str] = None
-    embedding_model: str = "text-embedding-3-small"
+    embedding_model: Optional[str] = None
     embedding_api_key: Optional[str] = None
     embedding_base_url: Optional[str] = None
 
@@ -371,21 +373,21 @@ def start_plan(req: PlanRequest, background_tasks: BackgroundTasks):
     final_stats = req.stats or {}
     final_stats.update(enrich_stats)
 
-    # Backend fallback: If frontend sends default/fallback model, use env var instead
-    # This handles cases where frontend fails to load config (e.g., backend not ready yet)
-    model_name = req.model_name
-    fallback_defaults = {'gpt-4o', 'deepseek-chat', ''}  # Known frontend defaults
-    if not model_name or model_name in fallback_defaults:
-        env_model = os.getenv("MUJICA_DEFAULT_MODEL", "")
-        if env_model:
-            print(f"[API /api/plan] Frontend sent '{model_name}', using env fallback: '{env_model}'")
-            model_name = env_model
-        else:
-            model_name = model_name or "deepseek-chat"  # Ultimate fallback
+    # Backend reads config directly from env vars (primary source)
+    # Frontend values only override if explicitly provided and non-empty
+    model_name = os.getenv("MUJICA_DEFAULT_MODEL", "deepseek-chat")
+    base_url = os.getenv("OPENAI_BASE_URL", "")
+    api_key = os.getenv("OPENAI_API_KEY", "")
     
-    # Also fallback base_url and api_key
-    base_url = req.base_url or os.getenv("OPENAI_BASE_URL", "")
-    api_key = req.api_key or os.getenv("OPENAI_API_KEY", "")
+    # Allow frontend override only if user explicitly set something different
+    if req.model_name and req.model_name not in {'gpt-4o', 'deepseek-chat', ''}:
+        model_name = req.model_name
+    if req.base_url:
+        base_url = req.base_url
+    if req.api_key:
+        api_key = req.api_key
+    
+    print(f"[API /api/plan] Using: model='{model_name}', base_url='{base_url[:30] if base_url else 'unset'}...'")
 
     # Run in background thread (managed by logic inside job_manager to allow cancellation)
     # But since run_plan_job is synchronous, we wrap it in a thread here
@@ -410,22 +412,29 @@ def start_plan(req: PlanRequest, background_tasks: BackgroundTasks):
 def start_research(req: ResearchRequest, background_tasks: BackgroundTasks):
     job = manager.create_job("research")
     
-    # Backend fallback for model/api config
-    model_name = req.model_name
-    fallback_defaults = {'gpt-4o', 'deepseek-chat', ''}
-    if not model_name or model_name in fallback_defaults:
-        env_model = os.getenv("MUJICA_DEFAULT_MODEL", "")
-        if env_model:
-            print(f"[API /api/research] Frontend sent '{model_name}', using env fallback: '{env_model}'")
-            model_name = env_model
-        else:
-            model_name = model_name or "deepseek-chat"
+    # Backend reads config directly from env vars (primary source)
+    model_name = os.getenv("MUJICA_DEFAULT_MODEL", "deepseek-chat")
+    chat_api_key = os.getenv("OPENAI_API_KEY", "")
+    chat_base_url = os.getenv("OPENAI_BASE_URL", "")
+    embedding_model = os.getenv("MUJICA_EMBEDDING_MODEL", "text-embedding-3-small")
+    embedding_api_key = os.getenv("MUJICA_EMBEDDING_API_KEY", "") or chat_api_key
+    embedding_base_url = os.getenv("MUJICA_EMBEDDING_BASE_URL", "") or chat_base_url
     
-    chat_api_key = req.chat_api_key or os.getenv("OPENAI_API_KEY", "")
-    chat_base_url = req.chat_base_url or os.getenv("OPENAI_BASE_URL", "")
-    embedding_model = req.embedding_model or os.getenv("MUJICA_EMBEDDING_MODEL", "text-embedding-3-small")
-    embedding_api_key = req.embedding_api_key or os.getenv("MUJICA_EMBEDDING_API_KEY", "") or chat_api_key
-    embedding_base_url = req.embedding_base_url or os.getenv("MUJICA_EMBEDDING_BASE_URL", "") or chat_base_url
+    # Allow frontend override only if user explicitly set something different
+    if req.model_name and req.model_name not in {'gpt-4o', 'deepseek-chat', ''}:
+        model_name = req.model_name
+    if req.chat_api_key:
+        chat_api_key = req.chat_api_key
+    if req.chat_base_url:
+        chat_base_url = req.chat_base_url
+    if req.embedding_model:
+        embedding_model = req.embedding_model
+    if req.embedding_api_key:
+        embedding_api_key = req.embedding_api_key
+    if req.embedding_base_url:
+        embedding_base_url = req.embedding_base_url
+    
+    print(f"[API /api/research] Using: model='{model_name}', embedding='{embedding_model}'")
     
     t = threading.Thread(
         target=run_research_job,
