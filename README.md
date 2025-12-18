@@ -45,9 +45,7 @@
 
 MUJICA 采用多阶段 Agent 架构，模拟人类研究者的完整思维路径：
 
-<p align="center">
-  <img src="electron-app/assets/stucture.png" alt="MUJICA Workflow Structure" width="800" />
-</p>
+
 
 ```
 [用户查询] → [Planner Agent] → [Researcher Agent] → [Writer Agent] → [Verifier Agent]
@@ -87,21 +85,10 @@ MUJICA 采用多阶段 Agent 架构，模拟人类研究者的完整思维路径
 ## 🛠 技术架构
 
 采用现代化的双进程架构，确保性能与扩展性：
+<p align="center">
+  <img src="electron-app/assets/structure.png" alt="MUJICA Workflow Structure" width="800" />
+</p>
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     MUJICA Desktop                          │
-├─────────────────────────────────────────────────────────────┤
-│  ┌───────────────────┐     HTTP      ┌───────────────────┐  │
-│  │   Electron Shell  │ ←──────────→ │   Python Backend   │  │
-│  │   + React UI      │   :8000       │   (FastAPI)        │  │
-│  │                   │               │                    │  │
-│  │  • Vite           │               │  • LLM Agents      │  │
-│  │  • TailwindCSS    │               │  • LanceDB         │  │
-│  │  • Framer Motion  │               │  • SQLite          │  │
-│  └───────────────────┘               └───────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
-```
 
 | 组件     | 技术栈                                | 说明              |
 | -------- | ------------------------------------- | ----------------- |
