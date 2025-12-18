@@ -909,40 +909,35 @@ async def import_kb(file: UploadFile = File(...)):
                         print(f"SQLite merge error: {e}")
                         raise HTTPException(500, f"Failed to merge metadata: {e}")
         
-            # 3. Merge LanceDB (vectors)
-            if lancedb:
-                for table_name in ["papers", "chunks"]:
-                    # LanceDB lib uses folder names like 'papers.lance' usually, but 'open_table' takes name without extension if in managed dir.
-                    # Here we operate on raw directories 'papers.lance' and 'chunks.lance'
-                    src_tbl_dir = extract_dir / f"{table_name}.lance"
-                    dst_tbl_dir = kb_path / f"{table_name}.lance"
-                    
-                    if src_tbl_dir.exists():
-                        print(f"[Import] Processing LanceDB table: {table_name}")
-                        if not dst_tbl_dir.exists():
-                            # Direct copy if not exists
+            # 3. Merge LanceDB (vectors) - simplified approach for better PyInstaller compatibility
+            for table_name in ["papers", "chunks"]:
+                src_tbl_dir = extract_dir / f"{table_name}.lance"
+                dst_tbl_dir = kb_path / f"{table_name}.lance"
+                
+                if src_tbl_dir.exists():
+                    print(f"[Import] Processing LanceDB table: {table_name}")
+                    if not dst_tbl_dir.exists():
+                        # Direct copy if not exists
+                        print(f"[Import] Copying {table_name} (new)")
+                        shutil.copytree(src_tbl_dir, dst_tbl_dir)
+                    else:
+                        # For merge, we replace the table (simpler and more reliable than API merge)
+                        # This is a "replace" strategy, not "merge"
+                        print(f"[Import] Replacing {table_name} (exists)")
+                        backup_dir = kb_path / f"{table_name}.lance.bak"
+                        try:
+                            if backup_dir.exists():
+                                shutil.rmtree(backup_dir)
+                            shutil.move(str(dst_tbl_dir), str(backup_dir))
                             shutil.copytree(src_tbl_dir, dst_tbl_dir)
-                        else:
-                            # Append merge
-                            try:
-                                # Open source as a separate DB connection to extract data
-                                src_db = lancedb.connect(str(extract_dir))
-                                dst_db = lancedb.connect(str(kb_path))
-                                
-                                if table_name in src_db.table_names() and table_name in dst_db.table_names():
-                                    src_tbl = src_db.open_table(table_name)
-                                    dst_tbl = dst_db.open_table(table_name)
-                                    # Append data - convert to list of dicts for compatibility
-                                    src_data = src_tbl.to_pandas().to_dict('records')
-                                    if src_data:
-                                        print(f"[Import] Merging {len(src_data)} records into {table_name}")
-                                        dst_tbl.add(src_data)
-                            except Exception as e:
-                                import traceback
-                                print(f"LanceDB merge error for {table_name}: {e}")
-                                traceback.print_exc()
-                                # Non-critical - allow partial failure
-                                pass
+                            # Remove backup on success
+                            shutil.rmtree(backup_dir)
+                        except Exception as e:
+                            print(f"[Import] LanceDB replace error for {table_name}: {e}")
+                            # Restore backup on failure
+                            if backup_dir.exists() and not dst_tbl_dir.exists():
+                                shutil.move(str(backup_dir), str(dst_tbl_dir))
+                            raise
             
             return {"status": "ok", "message": "Import and merge completed"}
     except HTTPException:
